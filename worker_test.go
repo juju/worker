@@ -8,12 +8,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/juju/testing"
-	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
 
-	coretesting "github.com/juju/juju/testing"
-	"github.com/juju/juju/worker"
-	"github.com/juju/juju/worker/workertest"
+	"gopkg.in/juju/worker.v1"
 )
 
 type WorkerSuite struct {
@@ -22,85 +19,108 @@ type WorkerSuite struct {
 
 var _ = gc.Suite(&WorkerSuite{})
 
-func (*WorkerSuite) TestStopReturnsNoError(c *gc.C) {
-	w := workertest.NewDeadWorker(nil)
-
+func (*WorkerSuite) TestStop(c *gc.C) {
+	killed := 0
+	testErr := errors.New("an error")
+	w := hookWorker{
+		kill: func() {
+			killed++
+		},
+		wait: func() error {
+			c.Check(killed, gc.Equals, 1)
+			return testErr
+		},
+	}
 	err := worker.Stop(w)
-	c.Check(err, jc.ErrorIsNil)
+	c.Assert(killed, gc.Equals, 1)
+	c.Assert(err, gc.Equals, testErr)
 }
 
-func (*WorkerSuite) TestStopReturnsError(c *gc.C) {
-	w := workertest.NewDeadWorker(errors.New("pow"))
-
-	err := worker.Stop(w)
-	c.Check(err, gc.ErrorMatches, "pow")
-}
-
-func (*WorkerSuite) TestStopKills(c *gc.C) {
-	w := workertest.NewErrorWorker(nil)
-	defer workertest.CleanKill(c, w)
-
-	worker.Stop(w)
-	workertest.CheckKilled(c, w)
-}
-
-func (*WorkerSuite) TestStopWaits(c *gc.C) {
-	w := workertest.NewForeverWorker(nil)
-	defer workertest.CheckKilled(c, w)
-	defer w.ReallyKill()
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		worker.Stop(w)
-	}()
-
-	select {
-	case <-time.After(coretesting.ShortWait):
-	case <-done:
-		c.Fatalf("Stop returned early")
+func (*WorkerSuite) TestDead(c *gc.C) {
+	waiting := make(chan struct{})
+	w := hookWorker{
+		wait: func() error {
+			waiting <- struct{}{}
+			<-waiting
+			return nil
+		},
 	}
-
-	w.ReallyKill()
-
+	deadCh := worker.Dead(w)
 	select {
-	case <-done:
-	case <-time.After(coretesting.LongWait):
-		c.Fatalf("Stop never returned")
+	case <-waiting:
+	case <-time.After(longWait):
+		c.Fatalf("wait never called")
+	}
+	select {
+	case <-deadCh:
+		c.Fatalf("received value before worker is dead")
+	case <-time.After(shortWait):
+	}
+	close(waiting)
+	select {
+	case <-deadCh:
+	case <-time.After(longWait):
+		c.Fatalf("never received on dead channel")
 	}
 }
 
-func (*WorkerSuite) TestDeadAlready(c *gc.C) {
-	w := workertest.NewDeadWorker(nil)
-
-	select {
-	case _, ok := <-worker.Dead(w):
-		c.Check(ok, jc.IsFalse)
-	case <-time.After(coretesting.LongWait):
-		c.Fatalf("Dead never sent")
+func (*WorkerSuite) TestDeadWithDeadMethod(c *gc.C) {
+	deadCh := make(chan struct{})
+	w := hookWorkerWithDead{
+		hookWorker: hookWorker{
+			wait: func() error {
+				c.Error("wait should not be called")
+				return nil
+			},
+		},
+		dead: func() <-chan struct{} {
+			return deadCh
+		},
 	}
+	ch := worker.Dead(w)
+	c.Assert(ch, gc.Equals, (<-chan struct{})(deadCh))
 }
 
-func (*WorkerSuite) TestDeadWaits(c *gc.C) {
-	w := workertest.NewErrorWorker(nil)
-	defer workertest.CleanKill(c, w)
-
-	dead := worker.Dead(w)
-	select {
-	case <-time.After(coretesting.ShortWait):
-	case _, ok := <-dead:
-		if !ok {
-			c.Fatalf("Dead closed early")
-		} else {
-			c.Fatalf("Dead sent unexpectedly")
-		}
+func (*WorkerSuite) TestDeadWithDeadMethodReturningNil(c *gc.C) {
+	waitCalls, deadCalls := 0, 0
+	w := hookWorkerWithDead{
+		hookWorker: hookWorker{
+			wait: func() error {
+				waitCalls++
+				return nil
+			},
+		},
+		dead: func() <-chan struct{} {
+			deadCalls++
+			return nil
+		},
 	}
+	ch := worker.Dead(w)
+	<-ch
+	c.Assert(waitCalls, gc.Equals, 1)
+	c.Assert(deadCalls, gc.Equals, 1)
+}
 
-	w.Kill()
-	select {
-	case _, ok := <-dead:
-		c.Check(ok, jc.IsFalse)
-	case <-time.After(coretesting.LongWait):
-		c.Fatalf("Dead never closed")
-	}
+// hookWorker implements worker.Worker by
+// deferring to its member functions.
+type hookWorker struct {
+	kill func()
+	wait func() error
+}
+
+func (w hookWorker) Kill() {
+	w.kill()
+}
+
+func (w hookWorker) Wait() error {
+	return w.wait()
+}
+
+type hookWorkerWithDead struct {
+	hookWorker
+	dead func() <-chan struct{}
+}
+
+func (w hookWorkerWithDead) Dead() <-chan struct{} {
+	return w.dead()
 }
