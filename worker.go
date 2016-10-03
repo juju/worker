@@ -33,12 +33,23 @@ func Stop(worker Worker) error {
 }
 
 // Dead returns a channel that will be closed when the supplied
-// Worker has completed.
+// Worker has completed. If the worker implements
+//	interface {Dead() <-chan struct{}}
+// then if the result of that method is non-nil, it will be
+// returned.
 //
 // Don't be too casual about calling Dead -- for example, in a
 // standard select loop, `case <-worker.Dead(w):` will create
 // one new goroutine per iteration, which is... untidy.
 func Dead(worker Worker) <-chan struct{} {
+	type deader interface {
+		Dead() <-chan struct{}
+	}
+	if worker, ok := worker.(deader); ok {
+		if ch := worker.Dead(); ch != nil {
+			return ch
+		}
+	}
 	dead := make(chan struct{})
 	go func() {
 		defer close(dead)

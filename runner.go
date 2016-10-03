@@ -10,31 +10,20 @@ import (
 	"gopkg.in/tomb.v1"
 )
 
-// RestartDelay holds the length of time that a worker
-// will wait between exiting and restarting.
-const RestartDelay = 3 * time.Second
+// DefaultRestartDelay holds the default length of time that a worker
+// will wait between exiting and being restarted by a Runner.
+const DefaultRestartDelay = 3 * time.Second
 
-// Runner is implemented by instances capable of starting and stopping workers.
-type Runner interface {
-	Worker
-	StartWorker(id string, startFunc func() (Worker, error)) error
-	StopWorker(id string) error
-}
-
-// runner runs a set of workers, restarting them as necessary
+// Runner runs a set of workers, restarting them as necessary
 // when they fail.
-type runner struct {
-	tomb          tomb.Tomb
-	startc        chan startReq
-	stopc         chan string
-	donec         chan doneInfo
-	startedc      chan startInfo
-	isFatal       func(error) bool
-	moreImportant func(err0, err1 error) bool
+type Runner struct {
+	tomb     tomb.Tomb
+	startc   chan startReq
+	stopc    chan string
+	donec    chan doneInfo
+	startedc chan startInfo
 
-	// restartDelay holds the length of time that a worker
-	// will wait between exiting and restarting.
-	restartDelay time.Duration
+	params RunnerParams
 }
 
 type startReq struct {
@@ -52,6 +41,31 @@ type doneInfo struct {
 	err error
 }
 
+// RunnerParams holds the parameters for a NewRunner call.
+type RunnerParams struct {
+	// IsFatal is called when a worker exits. If it returns
+	// true, all the other workers
+	// will be stopped and the runner itself will finish.
+	//
+	// If IsFatal is nil, all errors will be treated as fatal.
+	IsFatal func(error) bool
+
+	// When the runner exits because one or more
+	// workers have returned a fatal error, only the most important one,
+	// will be returned. MoreImportant should report whether
+	// err0 is more important than err1.
+	//
+	// If MoreImportant is nil, the first error reported will be
+	// returned.
+	MoreImportant func(err0, err1 error) bool
+
+	// RestartDelay holds the length of time the runner will
+	// wait after a worker has exited with a non-fatal error
+	// before it is restarted.
+	// If this is zero, RestartDelay will be used.
+	RestartDelay time.Duration
+}
+
 // NewRunner creates a new Runner.  When a worker finishes, if its error
 // is deemed fatal (determined by calling isFatal), all the other workers
 // will be stopped and the runner itself will finish.  Of all the fatal errors
@@ -62,15 +76,27 @@ type doneInfo struct {
 // The function isFatal(err) returns whether err is a fatal error.  The
 // function moreImportant(err0, err1) returns whether err0 is considered
 // more important than err1.
-func NewRunner(isFatal func(error) bool, moreImportant func(err0, err1 error) bool, restartDelay time.Duration) Runner {
-	runner := &runner{
-		startc:        make(chan startReq),
-		stopc:         make(chan string),
-		donec:         make(chan doneInfo),
-		startedc:      make(chan startInfo),
-		isFatal:       isFatal,
-		moreImportant: moreImportant,
-		restartDelay:  restartDelay,
+func NewRunner(p RunnerParams) *Runner {
+	if p.IsFatal == nil {
+		p.IsFatal = func(error) bool {
+			return true
+		}
+	}
+	if p.MoreImportant == nil {
+		p.MoreImportant = func(err0, err1 error) bool {
+			return true
+		}
+	}
+	if p.RestartDelay == 0 {
+		p.RestartDelay = DefaultRestartDelay
+	}
+
+	runner := &Runner{
+		startc:   make(chan startReq),
+		stopc:    make(chan string),
+		donec:    make(chan doneInfo),
+		startedc: make(chan startInfo),
+		params:   p,
 	}
 	go func() {
 		defer runner.tomb.Done()
@@ -89,7 +115,7 @@ var ErrDead = errors.New("worker runner is not running")
 // If there is already a worker with the given id, nothing will be done.
 //
 // StartWorker returns ErrDead if the runner is not running.
-func (runner *runner) StartWorker(id string, startFunc func() (Worker, error)) error {
+func (runner *Runner) StartWorker(id string, startFunc func() (Worker, error)) error {
 	select {
 	case runner.startc <- startReq{id, startFunc}:
 		return nil
@@ -102,7 +128,7 @@ func (runner *runner) StartWorker(id string, startFunc func() (Worker, error)) e
 // It does nothing if there is no such worker.
 //
 // StopWorker returns ErrDead if the runner is not running.
-func (runner *runner) StopWorker(id string) error {
+func (runner *Runner) StopWorker(id string) error {
 	select {
 	case runner.stopc <- id:
 		return nil
@@ -111,11 +137,13 @@ func (runner *runner) StopWorker(id string) error {
 	return ErrDead
 }
 
-func (runner *runner) Wait() error {
+// Wait implements Worker.Wait
+func (runner *Runner) Wait() error {
 	return runner.tomb.Wait()
 }
 
-func (runner *runner) Kill() {
+// Kill implements Worker.Kill
+func (runner *Runner) Kill() {
 	logger.Debugf("killing runner %p", runner)
 	runner.tomb.Kill(nil)
 }
@@ -127,7 +155,7 @@ type workerInfo struct {
 	stopping     bool
 }
 
-func (runner *runner) run() error {
+func (runner *Runner) run() error {
 	// workers holds the current set of workers.  All workers with a
 	// running goroutine have an entry here.
 	workers := make(map[string]*workerInfo)
@@ -159,7 +187,7 @@ func (runner *runner) run() error {
 			if info == nil {
 				workers[req.id] = &workerInfo{
 					start:        req.start,
-					restartDelay: runner.restartDelay,
+					restartDelay: runner.params.RestartDelay,
 				}
 				go runner.runWorker(0, req.id, req.start)
 				break
@@ -195,9 +223,9 @@ func (runner *runner) run() error {
 				break
 			}
 			if info.err != nil {
-				if runner.isFatal(info.err) {
+				if runner.params.IsFatal(info.err) {
 					logger.Errorf("fatal %q: %v", info.id, info.err)
-					if finalError == nil || runner.moreImportant(info.err, finalError) {
+					if finalError == nil || runner.params.MoreImportant(info.err, finalError) {
 						finalError = info.err
 					}
 					delete(workers, info.id)
@@ -219,7 +247,7 @@ func (runner *runner) run() error {
 				break
 			}
 			go runner.runWorker(workerInfo.restartDelay, info.id, workerInfo.start)
-			workerInfo.restartDelay = runner.restartDelay
+			workerInfo.restartDelay = runner.params.RestartDelay
 		}
 	}
 }
@@ -243,7 +271,7 @@ func killWorker(id string, info *workerInfo) {
 }
 
 // runWorker starts the given worker after waiting for the given delay.
-func (runner *runner) runWorker(delay time.Duration, id string, start func() (Worker, error)) {
+func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Worker, error)) {
 	if delay > 0 {
 		logger.Infof("restarting %q in %v", id, delay)
 		select {
