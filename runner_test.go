@@ -5,6 +5,7 @@ package worker_test
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -599,6 +600,19 @@ func (*RunnerSuite) TestWorkerWhenWorkerRemovedWhileWaiting(c *gc.C) {
 	case <-time.After(longWait):
 		c.Fatalf("timed out waiting for worker")
 	}
+}
+
+func (*RunnerSuite) TestWorkerWhenStartCallsGoexit(c *gc.C) {
+	runner := worker.NewRunner(worker.RunnerParams{
+		IsFatal: allFatal,
+	})
+	defer worker.Stop(runner)
+
+	runner.StartWorker("id", func() (worker.Worker, error) {
+		runtime.Goexit()
+		panic("unreachable")
+	})
+	c.Assert(runner.Wait(), gc.ErrorMatches, `runtime.Goexit called in running worker - probably inappropriate Assert`)
 }
 
 type testWorkerStarter struct {

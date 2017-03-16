@@ -475,7 +475,32 @@ func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Wo
 		}
 	}
 	logger.Infof("start %q", id)
+
+	// Defensively ensure that we get reasonable behaviour
+	// if something calls Goexit inside the worker (this can
+	// happen if something calls check.Assert) - if we don't
+	// do this, then this will usually turn into a hard-to-find
+	// deadlock when the runner is stopped but the runWorker
+	// goroutine will never signal that it's finished.
+	normal := false
+	defer func() {
+		if normal {
+			return
+		}
+		// Since normal isn't true, it means that something
+		// inside start must have called panic or runtime.Goexit.
+		// If it's a panic, we let it panic; if it's called Goexit,
+		// we'll just return an error, enabling this functionality
+		// to be tested.
+		if err := recover(); err != nil {
+			panic(err)
+		}
+		logger.Infof("%q called runtime.Goexit unexpectedly", id)
+		runner.donec <- doneInfo{id, errors.Errorf("runtime.Goexit called in running worker - probably inappropriate Assert")}
+	}()
 	worker, err := start()
+	normal = true
+
 	if err == nil {
 		runner.startedc <- startInfo{id, worker}
 		err = worker.Wait()
