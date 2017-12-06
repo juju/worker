@@ -9,7 +9,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/juju/utils/clock"
-	"gopkg.in/tomb.v1"
+	"gopkg.in/tomb.v2"
 )
 
 // DefaultRestartDelay holds the default length of time that a worker
@@ -166,10 +166,7 @@ func NewRunner(p RunnerParams) *Runner {
 		workers:  make(map[string]*workerInfo),
 	}
 	runner.workersChangedCond.L = &runner.mu
-	go func() {
-		defer runner.tomb.Done()
-		runner.tomb.Kill(runner.run())
-	}()
+	runner.tomb.Go(runner.run)
 	return runner
 }
 
