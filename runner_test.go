@@ -615,6 +615,60 @@ func (*RunnerSuite) TestWorkerWhenStartCallsGoexit(c *gc.C) {
 	c.Assert(runner.Wait(), gc.ErrorMatches, `runtime.Goexit called in running worker - probably inappropriate Assert`)
 }
 
+func (*RunnerSuite) TestRunnerReport(c *gc.C) {
+	t0 := time.Now()
+	started := make(chan worker.Worker)
+	clock := testclock.NewClock(t0)
+	runner := worker.NewRunnerWithNotify(worker.RunnerParams{
+		IsFatal:      noneFatal,
+		RestartDelay: time.Second,
+		Clock:        clock,
+	}, started)
+	defer worker.Stop(runner)
+
+	for i := 0; i < 5; i++ {
+		starter := newTestWorkerStarterWithReport(map[string]interface{}{
+			"index": i,
+		})
+		runner.StartWorker(fmt.Sprintf("worker-%d", i), starter.start)
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			c.Fatalf("worker %d failed to start", i)
+		}
+	}
+
+	report := runner.Report()
+	c.Assert(report, jc.DeepEquals, map[string]interface{}{
+		"workers": map[string]interface{}{
+			"worker-0": map[string]interface{}{
+				"report": map[string]interface{}{
+					"index": 0},
+				"state": "started",
+			},
+			"worker-1": map[string]interface{}{
+				"state": "started",
+				"report": map[string]interface{}{
+					"index": 1},
+			},
+			"worker-2": map[string]interface{}{
+				"state": "started",
+				"report": map[string]interface{}{
+					"index": 2},
+			},
+			"worker-3": map[string]interface{}{
+				"state": "started",
+				"report": map[string]interface{}{
+					"index": 3},
+			},
+			"worker-4": map[string]interface{}{
+				"state": "started",
+				"report": map[string]interface{}{
+					"index": 4},
+			},
+		}})
+}
+
 type testWorkerStarter struct {
 	startCount int32
 
@@ -642,12 +696,24 @@ type testWorkerStarter struct {
 
 	// The hook function is called after starting the worker.
 	hook func()
+
+	// Any report values are returned in the Report call.
+	report map[string]interface{}
 }
 
 func newTestWorkerStarter() *testWorkerStarter {
 	return &testWorkerStarter{
 		die:         make(chan error, 1),
 		startNotify: make(chan bool, 100),
+		hook:        func() {},
+	}
+}
+
+func newTestWorkerStarterWithReport(report map[string]interface{}) *testWorkerStarter {
+	return &testWorkerStarter{
+		die:         make(chan error, 1),
+		startNotify: make(chan bool, 100),
+		report:      report,
 		hook:        func() {},
 	}
 }
@@ -699,6 +765,10 @@ func (t *testWorker) Kill() {
 
 func (t *testWorker) Wait() error {
 	return t.tomb.Wait()
+}
+
+func (t *testWorker) Report() map[string]interface{} {
+	return t.starter.report
 }
 
 func (t *testWorker) run() (err error) {

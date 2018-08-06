@@ -57,6 +57,11 @@ type Runner struct {
 
 	// workers holds the current set of workers.
 	workers map[string]*workerInfo
+
+	// notifyStarted is used only for test synchronisation.
+	// As the worker startInfo values are processed, the worker is sent
+	// down this channel if this channel is not nil.
+	notifyStarted chan<- Worker
 }
 
 // workerInfo holds information on one worker id.
@@ -337,7 +342,9 @@ func (runner *Runner) run() error {
 		case info := <-runner.startedc:
 			logger.Debugf("%q started", info.id)
 			runner.setWorker(info.id, info.worker)
-
+			if runner.notifyStarted != nil {
+				runner.notifyStarted <- info.worker
+			}
 		case info := <-runner.donec:
 			logger.Debugf("%q done: %v", info.id, info.err)
 			runner.workerDone(info)
