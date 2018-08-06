@@ -15,7 +15,6 @@ import (
 	"github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
-	"gopkg.in/errgo.v1"
 	"gopkg.in/tomb.v2"
 
 	"gopkg.in/juju/worker.v1"
@@ -434,7 +433,7 @@ func (*RunnerSuite) TestWorkerWithAbort(c *gc.C) {
 	})
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
-	starter.startErr = errgo.Newf("test error")
+	starter.startErr = errors.Errorf("test error")
 	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
@@ -530,7 +529,7 @@ func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 	})
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
-	starter.startErr = errgo.Newf("test error")
+	starter.startErr = errors.Errorf("test error")
 	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
@@ -565,7 +564,7 @@ func (*RunnerSuite) TestWorkerWhenWorkerRemovedWhileWaiting(c *gc.C) {
 	})
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
-	starter.startErr = errgo.Newf("test error")
+	starter.startErr = errors.Errorf("test error")
 	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
