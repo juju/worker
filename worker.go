@@ -3,12 +3,6 @@
 
 package worker
 
-import (
-	"github.com/juju/loggo"
-)
-
-var logger = loggo.GetLogger("juju.worker")
-
 // Worker describes any type whose validity and/or activity is bounded
 // in time. Most frequently, they will represent the duration of some
 // task or tasks running on internal goroutines, but it's possible and
