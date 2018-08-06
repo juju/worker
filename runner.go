@@ -125,6 +125,12 @@ type Logger interface {
 	Errorf(string, ...interface{})
 }
 
+// Clock represents the methods needed from the clock.
+type Clock interface {
+	Now() time.Time
+	After(time.Duration) <-chan time.Time
+}
+
 // RunnerParams holds the parameters for a NewRunner call.
 type RunnerParams struct {
 	// IsFatal is called when a worker exits. If it returns
@@ -151,7 +157,7 @@ type RunnerParams struct {
 
 	// Clock is used for timekeeping. If it's nil, clock.WallClock
 	// will be used.
-	Clock clock.Clock
+	Clock Clock
 
 	// Logger is used to provide an implementation for where the logging
 	// messages go for the runner. If it's nil, no logging output.
