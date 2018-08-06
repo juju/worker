@@ -1,5 +1,5 @@
 // Copyright 2012, 2013 Canonical Ltd.
-// Licensed under the AGPLv3, see LICENCE file for details.
+// Licensed under the LGPLv3, see LICENCE file for details.
 
 package worker
 
@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/juju/clock"
 	"github.com/juju/errors"
-	"github.com/juju/utils/clock"
 	"gopkg.in/tomb.v2"
 )
 
@@ -57,6 +57,11 @@ type Runner struct {
 
 	// workers holds the current set of workers.
 	workers map[string]*workerInfo
+
+	// notifyStarted is used only for test synchronisation.
+	// As the worker startInfo values are processed, the worker is sent
+	// down this channel if this channel is not nil.
+	notifyStarted chan<- Worker
 }
 
 // workerInfo holds information on one worker id.
@@ -82,6 +87,19 @@ type workerInfo struct {
 	// being killed. The runWorker goroutine will
 	// still exist while this is true.
 	stopping bool
+
+	// started holds the time the worker was started.
+	started time.Time
+}
+
+func (i *workerInfo) status() string {
+	if i.stopping && i.worker != nil {
+		return "stopping"
+	}
+	if i.worker == nil {
+		return "stopped"
+	}
+	return "started"
 }
 
 type startReq struct {
@@ -98,6 +116,19 @@ type startInfo struct {
 type doneInfo struct {
 	id  string
 	err error
+}
+
+// Logger represents the various logging methods used by the runner.
+type Logger interface {
+	Debugf(string, ...interface{})
+	Infof(string, ...interface{})
+	Errorf(string, ...interface{})
+}
+
+// Clock represents the methods needed from the clock.
+type Clock interface {
+	Now() time.Time
+	After(time.Duration) <-chan time.Time
 }
 
 // RunnerParams holds the parameters for a NewRunner call.
@@ -126,7 +157,11 @@ type RunnerParams struct {
 
 	// Clock is used for timekeeping. If it's nil, clock.WallClock
 	// will be used.
-	Clock clock.Clock
+	Clock Clock
+
+	// Logger is used to provide an implementation for where the logging
+	// messages go for the runner. If it's nil, no logging output.
+	Logger Logger
 }
 
 // NewRunner creates a new Runner.  When a worker finishes, if its error
@@ -155,6 +190,9 @@ func NewRunner(p RunnerParams) *Runner {
 	}
 	if p.Clock == nil {
 		p.Clock = clock.WallClock
+	}
+	if p.Logger == nil {
+		p.Logger = noopLogger{}
 	}
 
 	runner := &Runner{
@@ -217,7 +255,7 @@ func (runner *Runner) Wait() error {
 
 // Kill implements Worker.Kill
 func (runner *Runner) Kill() {
-	logger.Debugf("killing runner %p", runner)
+	runner.params.Logger.Debugf("killing runner %p", runner)
 	runner.tomb.Kill(nil)
 }
 
@@ -307,26 +345,28 @@ func (runner *Runner) run() error {
 		}
 		select {
 		case <-tombDying:
-			logger.Infof("runner is dying")
+			runner.params.Logger.Infof("runner is dying")
 			runner.isDying = true
 			runner.killAll()
 			tombDying = nil
 
 		case req := <-runner.startc:
-			logger.Debugf("start %q", req.id)
+			runner.params.Logger.Debugf("start %q", req.id)
 			runner.startWorker(req)
 			close(req.reply)
 
 		case id := <-runner.stopc:
-			logger.Debugf("stop %q", id)
+			runner.params.Logger.Debugf("stop %q", id)
 			runner.killWorker(id)
 
 		case info := <-runner.startedc:
-			logger.Debugf("%q started", info.id)
+			runner.params.Logger.Debugf("%q started", info.id)
 			runner.setWorker(info.id, info.worker)
-
+			if runner.notifyStarted != nil {
+				runner.notifyStarted <- info.worker
+			}
 		case info := <-runner.donec:
-			logger.Debugf("%q done: %v", info.id, info.err)
+			runner.params.Logger.Debugf("%q done: %v", info.id, info.err)
 			runner.workerDone(info)
 		}
 		runner.workersChangedCond.Broadcast()
@@ -337,7 +377,7 @@ func (runner *Runner) run() error {
 // by calling StartWorker.
 func (runner *Runner) startWorker(req startReq) {
 	if runner.isDying {
-		logger.Infof("ignoring start request for %q when dying", req.id)
+		runner.params.Logger.Infof("ignoring start request for %q when dying", req.id)
 		return
 	}
 	info := runner.workers[req.id]
@@ -347,6 +387,7 @@ func (runner *Runner) startWorker(req startReq) {
 		runner.workers[req.id] = &workerInfo{
 			start:        req.start,
 			restartDelay: runner.params.RestartDelay,
+			started:      runner.params.Clock.Now().UTC(),
 		}
 		go runner.runWorker(0, req.id, req.start)
 		return
@@ -369,13 +410,13 @@ func (runner *Runner) startWorker(req startReq) {
 func (runner *Runner) workerDone(info doneInfo) {
 	workerInfo := runner.workers[info.id]
 	if !workerInfo.stopping && info.err == nil {
-		logger.Debugf("removing %q from known workers", info.id)
+		runner.params.Logger.Debugf("removing %q from known workers", info.id)
 		runner.removeWorker(info.id)
 		return
 	}
 	if info.err != nil {
 		if runner.params.IsFatal(info.err) {
-			logger.Errorf("fatal %q: %v", info.id, info.err)
+			runner.params.Logger.Errorf("fatal %q: %v", info.id, info.err)
 			if runner.finalError == nil || runner.params.MoreImportant(info.err, runner.finalError) {
 				runner.finalError = info.err
 			}
@@ -386,10 +427,10 @@ func (runner *Runner) workerDone(info doneInfo) {
 			}
 			return
 		}
-		logger.Errorf("exited %q: %v", info.id, info.err)
+		runner.params.Logger.Errorf("exited %q: %v", info.id, info.err)
 	}
 	if workerInfo.start == nil {
-		logger.Debugf("no restart, removing %q from known workers", info.id)
+		runner.params.Logger.Debugf("no restart, removing %q from known workers", info.id)
 
 		// The worker has been deliberately stopped;
 		// we can now remove it from the list of workers.
@@ -450,18 +491,18 @@ func (runner *Runner) killWorkerLocked(id string) {
 	info.stopping = true
 	info.start = nil
 	if info.worker != nil {
-		logger.Debugf("killing %q", id)
+		runner.params.Logger.Debugf("killing %q", id)
 		info.worker.Kill()
 		info.worker = nil
 	} else {
-		logger.Debugf("couldn't kill %q, not yet started", id)
+		runner.params.Logger.Debugf("couldn't kill %q, not yet started", id)
 	}
 }
 
 // runWorker starts the given worker after waiting for the given delay.
 func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Worker, error)) {
 	if delay > 0 {
-		logger.Infof("restarting %q in %v", id, delay)
+		runner.params.Logger.Infof("restarting %q in %v", id, delay)
 		// TODO(rog) provide a way of interrupting this
 		// so that it can be stopped when a worker is removed.
 		select {
@@ -471,7 +512,7 @@ func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Wo
 		case <-runner.params.Clock.After(delay):
 		}
 	}
-	logger.Infof("start %q", id)
+	runner.params.Logger.Infof("start %q", id)
 
 	// Defensively ensure that we get reasonable behaviour
 	// if something calls Goexit inside the worker (this can
@@ -492,7 +533,7 @@ func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Wo
 		if err := recover(); err != nil {
 			panic(err)
 		}
-		logger.Infof("%q called runtime.Goexit unexpectedly", id)
+		runner.params.Logger.Infof("%q called runtime.Goexit unexpectedly", id)
 		runner.donec <- doneInfo{id, errors.Errorf("runtime.Goexit called in running worker - probably inappropriate Assert")}
 	}()
 	worker, err := start()
@@ -502,6 +543,43 @@ func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Wo
 		runner.startedc <- startInfo{id, worker}
 		err = worker.Wait()
 	}
-	logger.Infof("stopped %q, err: %v", id, err)
+	runner.params.Logger.Infof("stopped %q, err: %v", id, err)
 	runner.donec <- doneInfo{id, err}
 }
+
+type reporter interface {
+	Report() map[string]interface{}
+}
+
+// Report implements dependency.Reporter.
+func (runner *Runner) Report() map[string]interface{} {
+	workers := make(map[string]interface{})
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	for id, info := range runner.workers {
+		worker := info.worker
+		workerReport := map[string]interface{}{
+			"state": info.status(),
+		}
+		if !info.started.IsZero() {
+			workerReport["started"] = info.started.Format("2006-01-02 15:04:05")
+		}
+		if worker != nil {
+			if r, ok := worker.(reporter); ok {
+				if report := r.Report(); len(report) > 0 {
+					workerReport["report"] = report
+				}
+			}
+		}
+		workers[id] = workerReport
+	}
+	return map[string]interface{}{
+		"workers": workers,
+	}
+}
+
+type noopLogger struct{}
+
+func (noopLogger) Debugf(string, ...interface{}) {}
+func (noopLogger) Infof(string, ...interface{})  {}
+func (noopLogger) Errorf(string, ...interface{}) {}

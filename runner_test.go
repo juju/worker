@@ -1,5 +1,5 @@
 // Copyright 2012, 2013 Canonical Ltd.
-// Licensed under the AGPLv3, see LICENCE file for details.
+// Licensed under the LGPLv3, see LICENCE file for details.
 
 package worker_test
 
@@ -10,12 +10,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/juju/clock/testclock"
 	"github.com/juju/errors"
 	"github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
-	"gopkg.in/errgo.v1"
-	"gopkg.in/tomb.v1"
+	"gopkg.in/tomb.v2"
 
 	"gopkg.in/juju/worker.v1"
 )
@@ -425,7 +425,7 @@ func (*RunnerSuite) TestWorkerWithWorkerNotImmediatelyAvailable(c *gc.C) {
 
 func (*RunnerSuite) TestWorkerWithAbort(c *gc.C) {
 	t0 := time.Now()
-	clock := testing.NewClock(t0)
+	clock := testclock.NewClock(t0)
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      noneFatal,
 		RestartDelay: time.Second,
@@ -433,7 +433,7 @@ func (*RunnerSuite) TestWorkerWithAbort(c *gc.C) {
 	})
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
-	starter.startErr = errgo.Newf("test error")
+	starter.startErr = errors.Errorf("test error")
 	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
@@ -521,7 +521,7 @@ func (*RunnerSuite) TestWorkerConcurrent(c *gc.C) {
 
 func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 	t0 := time.Now()
-	clock := testing.NewClock(t0)
+	clock := testclock.NewClock(t0)
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      noneFatal,
 		RestartDelay: time.Second,
@@ -529,7 +529,7 @@ func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 	})
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
-	starter.startErr = errgo.Newf("test error")
+	starter.startErr = errors.Errorf("test error")
 	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
@@ -556,7 +556,7 @@ func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 
 func (*RunnerSuite) TestWorkerWhenWorkerRemovedWhileWaiting(c *gc.C) {
 	t0 := time.Now()
-	clock := testing.NewClock(t0)
+	clock := testclock.NewClock(t0)
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      noneFatal,
 		RestartDelay: time.Second,
@@ -564,7 +564,7 @@ func (*RunnerSuite) TestWorkerWhenWorkerRemovedWhileWaiting(c *gc.C) {
 	})
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
-	starter.startErr = errgo.Newf("test error")
+	starter.startErr = errors.Errorf("test error")
 	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
@@ -615,6 +615,68 @@ func (*RunnerSuite) TestWorkerWhenStartCallsGoexit(c *gc.C) {
 	c.Assert(runner.Wait(), gc.ErrorMatches, `runtime.Goexit called in running worker - probably inappropriate Assert`)
 }
 
+func (*RunnerSuite) TestRunnerReport(c *gc.C) {
+	// Use a non UTC timezone to show times output in UTC.
+	// Vostok is +6 for the entire year.
+	loc, err := time.LoadLocation("Antarctica/Vostok")
+	c.Assert(err, jc.ErrorIsNil)
+	t0 := time.Date(2018, 8, 7, 19, 15, 42, 0, loc)
+	started := make(chan worker.Worker)
+	clock := testclock.NewClock(t0)
+	runner := worker.NewRunnerWithNotify(worker.RunnerParams{
+		IsFatal:      noneFatal,
+		RestartDelay: time.Second,
+		Clock:        clock,
+	}, started)
+	defer worker.Stop(runner)
+
+	for i := 0; i < 5; i++ {
+		var report map[string]interface{}
+		// Only have reports for half of them.
+		if i%2 == 0 {
+			report = map[string]interface{}{"index": i}
+		}
+		starter := newTestWorkerStarterWithReport(report)
+		runner.StartWorker(fmt.Sprintf("worker-%d", i), starter.start)
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			c.Fatalf("worker %d failed to start", i)
+		}
+	}
+
+	report := runner.Report()
+	c.Assert(report, jc.DeepEquals, map[string]interface{}{
+		"workers": map[string]interface{}{
+			"worker-0": map[string]interface{}{
+				"report": map[string]interface{}{
+					"index": 0},
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
+			},
+			"worker-1": map[string]interface{}{
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
+			},
+			"worker-2": map[string]interface{}{
+				"report": map[string]interface{}{
+					"index": 2},
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
+			},
+			"worker-3": map[string]interface{}{
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
+			},
+			"worker-4": map[string]interface{}{
+				"report": map[string]interface{}{
+					"index": 4},
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
+			},
+		}})
+}
+
 type testWorkerStarter struct {
 	startCount int32
 
@@ -642,12 +704,24 @@ type testWorkerStarter struct {
 
 	// The hook function is called after starting the worker.
 	hook func()
+
+	// Any report values are returned in the Report call.
+	report map[string]interface{}
 }
 
 func newTestWorkerStarter() *testWorkerStarter {
 	return &testWorkerStarter{
 		die:         make(chan error, 1),
 		startNotify: make(chan bool, 100),
+		hook:        func() {},
+	}
+}
+
+func newTestWorkerStarterWithReport(report map[string]interface{}) *testWorkerStarter {
+	return &testWorkerStarter{
+		die:         make(chan error, 1),
+		startNotify: make(chan bool, 100),
+		report:      report,
 		hook:        func() {},
 	}
 }
@@ -684,7 +758,7 @@ func (starter *testWorkerStarter) start() (worker.Worker, error) {
 		starter: starter,
 	}
 	starter.startNotify <- true
-	go task.run()
+	task.tomb.Go(task.run)
 	return task, nil
 }
 
@@ -701,15 +775,16 @@ func (t *testWorker) Wait() error {
 	return t.tomb.Wait()
 }
 
-func (t *testWorker) run() {
-	defer t.tomb.Done()
+func (t *testWorker) Report() map[string]interface{} {
+	return t.starter.report
+}
 
+func (t *testWorker) run() (err error) {
 	t.starter.hook()
 	select {
 	case <-t.tomb.Dying():
-		t.tomb.Kill(t.starter.stopErr)
-	case err := <-t.starter.die:
-		t.tomb.Kill(err)
+		err = t.starter.stopErr // tomb.ErrDying
+	case err = <-t.starter.die:
 	}
 	if t.starter.stopWait != nil {
 		<-t.starter.stopWait
@@ -718,6 +793,7 @@ func (t *testWorker) run() {
 	if count := atomic.AddInt32(&t.starter.startCount, -1); count != 0 {
 		panic(fmt.Errorf("unexpected start count %d; expected 0", count))
 	}
+	return err
 }
 
 // errorWorker holds a worker that immediately dies with an error.g

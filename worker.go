@@ -1,13 +1,7 @@
 // Copyright 2012-2016 Canonical Ltd.
-// Licensed under the AGPLv3, see LICENCE file for details.
+// Licensed under the LGPLv3, see LICENCE file for details.
 
 package worker
-
-import (
-	"github.com/juju/loggo"
-)
-
-var logger = loggo.GetLogger("juju.worker")
 
 // Worker describes any type whose validity and/or activity is bounded
 // in time. Most frequently, they will represent the duration of some
