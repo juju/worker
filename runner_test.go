@@ -1,5 +1,5 @@
 // Copyright 2012, 2013 Canonical Ltd.
-// Licensed under the AGPLv3, see LICENCE file for details.
+// Licensed under the LGPLv3, see LICENCE file for details.
 
 package worker_test
 
@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/juju/clock/testclock"
 	"github.com/juju/errors"
 	"github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
@@ -425,7 +426,7 @@ func (*RunnerSuite) TestWorkerWithWorkerNotImmediatelyAvailable(c *gc.C) {
 
 func (*RunnerSuite) TestWorkerWithAbort(c *gc.C) {
 	t0 := time.Now()
-	clock := testing.NewClock(t0)
+	clock := testclock.NewClock(t0)
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      noneFatal,
 		RestartDelay: time.Second,
@@ -521,7 +522,7 @@ func (*RunnerSuite) TestWorkerConcurrent(c *gc.C) {
 
 func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 	t0 := time.Now()
-	clock := testing.NewClock(t0)
+	clock := testclock.NewClock(t0)
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      noneFatal,
 		RestartDelay: time.Second,
@@ -556,7 +557,7 @@ func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 
 func (*RunnerSuite) TestWorkerWhenWorkerRemovedWhileWaiting(c *gc.C) {
 	t0 := time.Now()
-	clock := testing.NewClock(t0)
+	clock := testclock.NewClock(t0)
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      noneFatal,
 		RestartDelay: time.Second,
