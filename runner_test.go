@@ -16,7 +16,7 @@ import (
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
 	"gopkg.in/errgo.v1"
-	"gopkg.in/tomb.v1"
+	"gopkg.in/tomb.v2"
 
 	"gopkg.in/juju/worker.v1"
 )
@@ -685,7 +685,7 @@ func (starter *testWorkerStarter) start() (worker.Worker, error) {
 		starter: starter,
 	}
 	starter.startNotify <- true
-	go task.run()
+	task.tomb.Go(task.run)
 	return task, nil
 }
 
@@ -702,15 +702,12 @@ func (t *testWorker) Wait() error {
 	return t.tomb.Wait()
 }
 
-func (t *testWorker) run() {
-	defer t.tomb.Done()
-
+func (t *testWorker) run() (err error) {
 	t.starter.hook()
 	select {
 	case <-t.tomb.Dying():
-		t.tomb.Kill(t.starter.stopErr)
-	case err := <-t.starter.die:
-		t.tomb.Kill(err)
+		err = t.starter.stopErr // tomb.ErrDying
+	case err = <-t.starter.die:
 	}
 	if t.starter.stopWait != nil {
 		<-t.starter.stopWait
@@ -719,6 +716,7 @@ func (t *testWorker) run() {
 	if count := atomic.AddInt32(&t.starter.startCount, -1); count != 0 {
 		panic(fmt.Errorf("unexpected start count %d; expected 0", count))
 	}
+	return err
 }
 
 // errorWorker holds a worker that immediately dies with an error.g
