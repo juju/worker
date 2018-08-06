@@ -82,6 +82,19 @@ type workerInfo struct {
 	// being killed. The runWorker goroutine will
 	// still exist while this is true.
 	stopping bool
+
+	// started holds the time the worker was started.
+	started time.Time
+}
+
+func (i *workerInfo) status() string {
+	if i.stopping && i.worker != nil {
+		return "stopping"
+	}
+	if i.worker == nil {
+		return "stopped"
+	}
+	return "started"
 }
 
 type startReq struct {
@@ -347,6 +360,7 @@ func (runner *Runner) startWorker(req startReq) {
 		runner.workers[req.id] = &workerInfo{
 			start:        req.start,
 			restartDelay: runner.params.RestartDelay,
+			started:      runner.params.Clock.Now(),
 		}
 		go runner.runWorker(0, req.id, req.start)
 		return
@@ -504,4 +518,30 @@ func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Wo
 	}
 	logger.Infof("stopped %q, err: %v", id, err)
 	runner.donec <- doneInfo{id, err}
+}
+
+type reporter interface {
+	Report() map[string]interface{}
+}
+
+// Report implements dependency.Reporter.
+func (runner *Runner) Report() map[string]interface{} {
+	workers := make(map[string]interface{})
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	for id, info := range runner.workers {
+		worker := info.worker
+		workerReport := map[string]interface{}{
+			"state": info.status(),
+		}
+		if worker != nil {
+			if r, ok := worker.(reporter); ok {
+				workerReport["report"] = r.Report()
+			}
+		}
+		workers[id] = workerReport
+	}
+	return map[string]interface{}{
+		"workers": workers,
+	}
 }
