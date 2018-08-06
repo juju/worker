@@ -616,7 +616,11 @@ func (*RunnerSuite) TestWorkerWhenStartCallsGoexit(c *gc.C) {
 }
 
 func (*RunnerSuite) TestRunnerReport(c *gc.C) {
-	t0 := time.Now()
+	// Use a non UTC timezone to show times output in UTC.
+	// Vostok is +6 for the entire year.
+	loc, err := time.LoadLocation("Antarctica/Vostok")
+	c.Assert(err, jc.ErrorIsNil)
+	t0 := time.Date(2018, 8, 7, 19, 15, 42, 0, loc)
 	started := make(chan worker.Worker)
 	clock := testclock.NewClock(t0)
 	runner := worker.NewRunnerWithNotify(worker.RunnerParams{
@@ -627,9 +631,12 @@ func (*RunnerSuite) TestRunnerReport(c *gc.C) {
 	defer worker.Stop(runner)
 
 	for i := 0; i < 5; i++ {
-		starter := newTestWorkerStarterWithReport(map[string]interface{}{
-			"index": i,
-		})
+		var report map[string]interface{}
+		// Only have reports for half of them.
+		if i%2 == 0 {
+			report = map[string]interface{}{"index": i}
+		}
+		starter := newTestWorkerStarterWithReport(report)
 		runner.StartWorker(fmt.Sprintf("worker-%d", i), starter.start)
 		select {
 		case <-started:
@@ -644,27 +651,28 @@ func (*RunnerSuite) TestRunnerReport(c *gc.C) {
 			"worker-0": map[string]interface{}{
 				"report": map[string]interface{}{
 					"index": 0},
-				"state": "started",
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
 			},
 			"worker-1": map[string]interface{}{
-				"state": "started",
-				"report": map[string]interface{}{
-					"index": 1},
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
 			},
 			"worker-2": map[string]interface{}{
-				"state": "started",
 				"report": map[string]interface{}{
 					"index": 2},
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
 			},
 			"worker-3": map[string]interface{}{
-				"state": "started",
-				"report": map[string]interface{}{
-					"index": 3},
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
 			},
 			"worker-4": map[string]interface{}{
-				"state": "started",
 				"report": map[string]interface{}{
 					"index": 4},
+				"state":   "started",
+				"started": "2018-08-07 13:15:42",
 			},
 		}})
 }

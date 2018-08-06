@@ -381,7 +381,7 @@ func (runner *Runner) startWorker(req startReq) {
 		runner.workers[req.id] = &workerInfo{
 			start:        req.start,
 			restartDelay: runner.params.RestartDelay,
-			started:      runner.params.Clock.Now(),
+			started:      runner.params.Clock.Now().UTC(),
 		}
 		go runner.runWorker(0, req.id, req.start)
 		return
@@ -555,9 +555,14 @@ func (runner *Runner) Report() map[string]interface{} {
 		workerReport := map[string]interface{}{
 			"state": info.status(),
 		}
+		if !info.started.IsZero() {
+			workerReport["started"] = info.started.Format("2006-01-02 15:04:05")
+		}
 		if worker != nil {
 			if r, ok := worker.(reporter); ok {
-				workerReport["report"] = r.Report()
+				if report := r.Report(); len(report) > 0 {
+					workerReport["report"] = report
+				}
 			}
 		}
 		workers[id] = workerReport
