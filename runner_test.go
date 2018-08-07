@@ -26,6 +26,9 @@ type RunnerSuite struct {
 
 var _ = gc.Suite(&RunnerSuite{})
 
+// Ensure that the Runner supports the Reporter interface.
+var _ worker.Reporter = (*worker.Runner)(nil)
+
 const (
 	shortWait = 100 * time.Millisecond
 	longWait  = 5 * time.Second

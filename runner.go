@@ -551,7 +551,7 @@ type reporter interface {
 	Report() map[string]interface{}
 }
 
-// Report implements dependency.Reporter.
+// Report implements Reporter.
 func (runner *Runner) Report() map[string]interface{} {
 	workers := make(map[string]interface{})
 	runner.mu.Lock()
@@ -559,15 +559,15 @@ func (runner *Runner) Report() map[string]interface{} {
 	for id, info := range runner.workers {
 		worker := info.worker
 		workerReport := map[string]interface{}{
-			"state": info.status(),
+			KeyState: info.status(),
 		}
 		if !info.started.IsZero() {
-			workerReport["started"] = info.started.Format("2006-01-02 15:04:05")
+			workerReport[KeyLastStart] = info.started.Format("2006-01-02 15:04:05")
 		}
 		if worker != nil {
 			if r, ok := worker.(reporter); ok {
 				if report := r.Report(); len(report) > 0 {
-					workerReport["report"] = report
+					workerReport[KeyReport] = report
 				}
 			}
 		}
