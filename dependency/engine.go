@@ -58,6 +58,14 @@ type EngineConfig struct {
 	// changed. It must not be negative.
 	BounceDelay time.Duration
 
+	// BackoffFactor is the value used to multiply the delay time
+	// for consecutive start attempts.
+	BackoffFactor float64
+
+	// MaxDelay is the maximum delay that the engine will wait after
+	// the exponential backoff due to consecutive start attempts.
+	MaxDelay time.Duration
+
 	// Clock will be a wall clock for production, and test clocks for tests.
 	Clock Clock
 
@@ -79,6 +87,14 @@ func (config *EngineConfig) Validate() error {
 	}
 	if config.BounceDelay < 0 {
 		return errors.New("BounceDelay is negative")
+	}
+	if config.BackoffFactor != 0 {
+		if config.BackoffFactor < 1 {
+			return errors.Errorf("BackoffFactor %v must be >= 1", config.BackoffFactor)
+		}
+	}
+	if config.MaxDelay < 0 {
+		return errors.New("MaxDealy is negative")
 	}
 	if config.Clock == nil {
 		return errors.NotValidf("missing Clock")
@@ -360,6 +376,7 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	// ...then update the info, copy it back to the engine, and start a worker
 	// goroutine based on current known state.
 	info.starting = true
+	info.startAttempts++
 	info.err = nil
 	info.abort = make(chan struct{})
 	engine.current[name] = info
@@ -368,7 +385,17 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	// Always fuzz the delay a bit to help randomise the order of workers starting,
 	// which should make bugs more obvious
 	if delay > time.Duration(0) {
-		delay += time.Duration(rand.Int31n(60)) * time.Millisecond
+		if engine.config.BackoffFactor > 0 {
+			for i := 1; i < info.startAttempts; i++ {
+				delay = time.Duration(float64(delay) * engine.config.BackoffFactor)
+			}
+			if engine.config.MaxDelay > 0 && delay > engine.config.MaxDelay {
+				delay = engine.config.MaxDelay
+			}
+		}
+		// Fuzz to ±10% of final duration.
+		fuzz := rand.Float64()*0.2 + 0.9
+		delay = time.Duration(float64(delay) * fuzz).Round(time.Millisecond)
 	}
 
 	go engine.runWorker(name, delay, manifold.Start, context)
@@ -437,12 +464,12 @@ func (engine *Engine) context(name string, inputs []string, abort <-chan struct{
 	}
 }
 
+var errAborted = errors.New("aborted before delay elapsed")
+
 // runWorker starts the supplied manifold's worker and communicates it back to the
 // loop goroutine; waits for worker completion; and communicates any error encountered
 // back to the loop goroutine. It must not be run on the loop goroutine.
 func (engine *Engine) runWorker(name string, delay time.Duration, start StartFunc, context *context) {
-
-	errAborted := errors.New("aborted before delay elapsed")
 
 	startAfterDelay := func() (worker.Worker, error) {
 		// NOTE: the context will expire *after* the worker is started.
@@ -468,11 +495,10 @@ func (engine *Engine) runWorker(name string, delay time.Duration, start StartFun
 		worker, err := startAfterDelay()
 		switch errors.Cause(err) {
 		case errAborted:
-			return nil
+			return errAborted
 		case nil:
 			engine.config.Logger.Tracef("running %q manifold worker", name)
 		default:
-			engine.config.Logger.Tracef("failed to start %q manifold worker: %v", name, err)
 			return err
 		}
 		select {
@@ -519,6 +545,8 @@ func (engine *Engine) gotStarted(name string, worker worker.Worker, resourceLog 
 		info.worker = worker
 		info.starting = false
 		info.startCount++
+		// Reset the start attempts after a successful start.
+		info.startAttempts = 0
 		info.resourceLog = resourceLog
 		info.startedTime = engine.config.Clock.Now().UTC()
 		engine.current[name] = info
@@ -535,7 +563,18 @@ type stackTracer interface {
 // gotStopped updates the engine to reflect the demise of (or failure to create)
 // a worker. It must only be called from the loop goroutine.
 func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceAccess) {
-	engine.config.Logger.Debugf("%q manifold worker stopped: %v", name, err)
+	switch errors.Cause(err) {
+	case nil:
+		engine.config.Logger.Debugf("%q manifold worker completed successfully", name)
+	case errAborted:
+		// The start attempt was aborted, so we haven't really started.
+		engine.config.Logger.Tracef("%q manifold worker bounced while starting", name)
+	case ErrMissing:
+		engine.config.Logger.Tracef("%q manifold worker failed to start: %v", name, err)
+	default:
+		engine.config.Logger.Debugf("%q manifold worker stopped: %v", name, err)
+	}
+
 	if filter := engine.manifolds[name].Filter; filter != nil {
 		err = filter(err)
 	}
@@ -553,8 +592,9 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 	engine.current[name] = workerInfo{
 		err:         err,
 		resourceLog: resourceLog,
-		// Keep the start count but clear the start timestamps.
-		startCount: info.startCount,
+		// Keep the start count and start attempts but clear the start timestamps.
+		startAttempts: info.startAttempts,
+		startCount:    info.startCount,
 	}
 	if engine.isDying() {
 		engine.config.Logger.Tracef("permanently stopped %q manifold worker (shutting down)", name)
@@ -568,7 +608,7 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 	} else {
 		// If we didn't stop it ourselves, we need to interpret the error.
 		switch errors.Cause(err) {
-		case nil:
+		case nil, errAborted:
 			// Nothing went wrong; the task completed successfully. Nothing
 			// needs to be done (unless the inputs change, in which case it
 			// gets to check again).
@@ -668,8 +708,9 @@ type workerInfo struct {
 	err         error
 	resourceLog []resourceAccess
 
-	startedTime time.Time
-	startCount  int
+	startedTime   time.Time
+	startCount    int
+	startAttempts int
 }
 
 // stopped returns true unless the worker is either assigned or starting.
