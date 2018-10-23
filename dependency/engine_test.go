@@ -803,5 +803,48 @@ func (s *EngineSuite) TestBackoffFactor(c *gc.C) {
 		clock.WaitAdvance(800*time.Millisecond, testing.ShortWait, 1)
 		mh.AssertStartAttempt(c)
 	})
+}
 
+func (s *EngineSuite) TestRestartDependentWhenAborted(c *gc.C) {
+	clock := testclock.NewClock(time.Now())
+	config := s.fix.defaultEngineConfig(clock)
+	config.BounceDelay = time.Second
+	config.BackoffFactor = 2.0
+	s.fix.config = &config
+
+	s.fix.run(c, func(engine *dependency.Engine) {
+
+		// Start a worker that has a dependency that isn't installed.
+		mh1 := newManifoldHarness("task2", "task3")
+		err := engine.Install("task1", mh1.Manifold())
+		c.Assert(err, jc.ErrorIsNil)
+		mh1.AssertNoStart(c)
+
+		// Right now task1 is waiting for a dependency change.
+
+		// Start task2 dependency, this will trigger a restart of task1
+		// in BounceDelay.
+		mh2 := newResourceIgnoringManifoldHarness()
+		err = engine.Install("task2", mh2.Manifold())
+		c.Assert(err, jc.ErrorIsNil)
+		mh2.AssertOneStart(c)
+
+		c.Logf("advance 500ms")
+		clock.WaitAdvance(500*time.Millisecond, testing.ShortWait, 1)
+		mh1.AssertNoStart(c)
+
+		// Not start task3, this will interrupt the start of task1.
+		mh3 := newResourceIgnoringManifoldHarness()
+		err = engine.Install("task3", mh3.Manifold())
+		c.Assert(err, jc.ErrorIsNil)
+		mh3.AssertOneStart(c)
+
+		// task1 should end up started after BounceDelay + fuzz
+		c.Logf("advance 1200ms")
+		// NOTE: we have two waiters because the first loop that was aborted
+		// is still technically in the test clock waiting.
+		clock.WaitAdvance(1200*time.Millisecond, testing.ShortWait, 2)
+
+		mh1.AssertOneStart(c)
+	})
 }
