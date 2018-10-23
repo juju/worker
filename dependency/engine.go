@@ -4,6 +4,7 @@
 package dependency
 
 import (
+	"math"
 	"math/rand"
 	"strings"
 	"time"
@@ -88,10 +89,8 @@ func (config *EngineConfig) Validate() error {
 	if config.BounceDelay < 0 {
 		return errors.New("BounceDelay is negative")
 	}
-	if config.BackoffFactor != 0 {
-		if config.BackoffFactor < 1 {
-			return errors.Errorf("BackoffFactor %v must be >= 1", config.BackoffFactor)
-		}
+	if config.BackoffFactor != 0 && config.BackoffFactor < 1 {
+		return errors.Errorf("BackoffFactor %v must be >= 1", config.BackoffFactor)
 	}
 	if config.MaxDelay < 0 {
 		return errors.New("MaxDelay is negative")
@@ -390,9 +389,7 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	// which should make bugs more obvious
 	if delay > time.Duration(0) {
 		if engine.config.BackoffFactor > 0 {
-			for i := 1; i < info.startAttempts; i++ {
-				delay = time.Duration(float64(delay) * engine.config.BackoffFactor)
-			}
+			delay = time.Duration(float64(delay) * math.Pow(engine.config.BackoffFactor, float64(info.startAttempts-1)))
 			if engine.config.MaxDelay > 0 && delay > engine.config.MaxDelay {
 				delay = engine.config.MaxDelay
 			}
