@@ -24,6 +24,7 @@ type engineFixture struct {
 	filter     dependency.FilterFunc
 	dirty      bool
 	clock      clock.Clock
+	config     *dependency.EngineConfig
 }
 
 func (fix *engineFixture) isFatalFunc() dependency.IsFatalFunc {
@@ -40,19 +41,26 @@ func (fix *engineFixture) worstErrorFunc() dependency.WorstErrorFunc {
 	return firstError
 }
 
-func (fix *engineFixture) run(c *gc.C, test func(*dependency.Engine)) {
-	fixutureClock := fix.clock
-	if fixutureClock == nil {
-		fixutureClock = clock.WallClock
-	}
-	config := dependency.EngineConfig{
+func (fix *engineFixture) defaultEngineConfig(clock clock.Clock) dependency.EngineConfig {
+	return dependency.EngineConfig{
 		IsFatal:     fix.isFatalFunc(),
 		WorstError:  fix.worstErrorFunc(),
 		Filter:      fix.filter, // can be nil anyway
 		ErrorDelay:  testing.ShortWait / 2,
 		BounceDelay: testing.ShortWait / 10,
-		Clock:       fixutureClock,
+		Clock:       clock,
 		Logger:      loggo.GetLogger("test"),
+	}
+}
+
+func (fix *engineFixture) run(c *gc.C, test func(*dependency.Engine)) {
+	fixtureClock := fix.clock
+	if fixtureClock == nil {
+		fixtureClock = clock.WallClock
+	}
+	config := fix.defaultEngineConfig(fixtureClock)
+	if fix.config != nil {
+		config = *fix.config
 	}
 
 	engine, err := dependency.NewEngine(config)
@@ -71,6 +79,8 @@ func (fix *engineFixture) kill(c *gc.C, engine *dependency.Engine) {
 
 type manifoldHarness struct {
 	inputs             []string
+	startError         error
+	startAttempts      chan struct{}
 	errors             chan error
 	starts             chan struct{}
 	requireResources   bool
@@ -80,6 +90,7 @@ type manifoldHarness struct {
 func newManifoldHarness(inputs ...string) *manifoldHarness {
 	return &manifoldHarness{
 		inputs:           inputs,
+		startAttempts:    make(chan struct{}, 1000),
 		errors:           make(chan error, 1000),
 		starts:           make(chan struct{}, 1000),
 		requireResources: true,
@@ -110,6 +121,10 @@ func (mh *manifoldHarness) Manifold() dependency.Manifold {
 }
 
 func (mh *manifoldHarness) start(context dependency.Context) (worker.Worker, error) {
+	mh.startAttempts <- struct{}{}
+	if mh.startError != nil {
+		return nil, mh.startError
+	}
 	for _, resourceName := range mh.inputs {
 		if err := context.Get(resourceName, nil); err != nil {
 			if mh.requireResources {
@@ -135,6 +150,14 @@ func (mh *manifoldHarness) AssertOneStart(c *gc.C) {
 	mh.AssertNoStart(c)
 }
 
+func (mh *manifoldHarness) AssertStartAttempt(c *gc.C) {
+	select {
+	case <-mh.startAttempts:
+	case <-time.After(testing.LongWait):
+		c.Fatalf("never started")
+	}
+}
+
 func (mh *manifoldHarness) AssertStart(c *gc.C) {
 	select {
 	case <-mh.starts:
@@ -148,6 +171,14 @@ func (mh *manifoldHarness) AssertNoStart(c *gc.C) {
 	case <-time.After(testing.ShortWait):
 	case <-mh.starts:
 		c.Fatalf("started unexpectedly")
+	}
+}
+
+func (mh *manifoldHarness) AssertNoStartAttempt(c *gc.C) {
+	select {
+	case <-time.After(testing.ShortWait):
+	case <-mh.startAttempts:
+		c.Fatalf("start attempted unexpectedly")
 	}
 }
 

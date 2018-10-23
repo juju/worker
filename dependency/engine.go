@@ -94,7 +94,7 @@ func (config *EngineConfig) Validate() error {
 		}
 	}
 	if config.MaxDelay < 0 {
-		return errors.New("MaxDealy is negative")
+		return errors.New("MaxDelay is negative")
 	}
 	if config.Clock == nil {
 		return errors.NotValidf("missing Clock")
@@ -376,7 +376,11 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	// ...then update the info, copy it back to the engine, and start a worker
 	// goroutine based on current known state.
 	info.starting = true
-	info.startAttempts++
+	if delay > 0 {
+		// Don't record the first attempt during manifold install.
+		// This is to avoid the extra backoff on the first failure.
+		info.startAttempts++
+	}
 	info.err = nil
 	info.abort = make(chan struct{})
 	engine.current[name] = info

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/juju/clock"
+	"github.com/juju/clock/testclock"
 	"github.com/juju/errors"
 	"github.com/juju/loggo"
 	"github.com/juju/testing"
@@ -28,6 +29,7 @@ var _ = gc.Suite(&EngineSuite{})
 func (s *EngineSuite) SetUpTest(c *gc.C) {
 	s.IsolationSuite.SetUpTest(c)
 	s.fix = &engineFixture{}
+	loggo.GetLogger("test").SetLogLevel(loggo.TRACE)
 }
 
 func (s *EngineSuite) TestInstallConvenienceWrapper(c *gc.C) {
@@ -690,6 +692,14 @@ func (s *EngineSuite) TestConfigValidate(c *gc.C) {
 		}, "BounceDelay is negative",
 	}, {
 		func(config *dependency.EngineConfig) {
+			config.BackoffFactor = 0.9
+		}, "BackoffFactor 0.9 must be >= 1",
+	}, {
+		func(config *dependency.EngineConfig) {
+			config.MaxDelay = -time.Second
+		}, "MaxDelay is negative",
+	}, {
+		func(config *dependency.EngineConfig) {
 			config.Clock = nil
 		}, "missing Clock not valid",
 	}, {
@@ -753,4 +763,45 @@ func (s *EngineSuite) TestValidateComplexManifolds(c *gc.C) {
 	manifolds["root1"] = dependency.Manifold{Inputs: []string{"leaf1"}}
 	err = dependency.Validate(manifolds)
 	c.Check(err, gc.ErrorMatches, "cycle detected at .*")
+}
+
+func (s *EngineSuite) TestBackoffFactor(c *gc.C) {
+	clock := testclock.NewClock(time.Now())
+	config := s.fix.defaultEngineConfig(clock)
+	config.ErrorDelay = time.Second
+	config.BackoffFactor = 2.0
+	config.MaxDelay = 3 * time.Second
+	s.fix.config = &config
+
+	s.fix.run(c, func(engine *dependency.Engine) {
+
+		mh := newManifoldHarness()
+		mh.startError = errors.New("boom")
+		err := engine.Install("task", mh.Manifold())
+		c.Assert(err, jc.ErrorIsNil)
+		// We should get the task start called, but it returns an error.
+		mh.AssertStartAttempt(c)
+
+		// Advance further than 1.1 * ErrorDelay to account for max fuzz.
+		clock.WaitAdvance(1200*time.Millisecond, testing.ShortWait, 1)
+		mh.AssertStartAttempt(c)
+
+		// Advance the clock to before 0.9 * 2 * ErrorDelay to ensure
+		// that we don't have another start attempt.
+		clock.WaitAdvance(1700*time.Millisecond, testing.ShortWait, 1)
+		mh.AssertNoStartAttempt(c)
+
+		// Advance further to 1.1 * 2 * ErrorDelay from the previous failed
+		// start, to account for max fuzz.
+		clock.WaitAdvance(600*time.Millisecond, testing.ShortWait, 1)
+		mh.AssertStartAttempt(c)
+
+		// Finally hit MaxDelay, so ensure we don't start before 0.9 * MaxDelay.
+		// But do start after 1.1 * MaxDelay.
+		clock.WaitAdvance(2600*time.Millisecond, testing.ShortWait, 1)
+		mh.AssertNoStartAttempt(c)
+		clock.WaitAdvance(800*time.Millisecond, testing.ShortWait, 1)
+		mh.AssertStartAttempt(c)
+	})
+
 }
