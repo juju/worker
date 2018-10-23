@@ -564,12 +564,18 @@ type stackTracer interface {
 // gotStopped updates the engine to reflect the demise of (or failure to create)
 // a worker. It must only be called from the loop goroutine.
 func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceAccess) {
+	// Copy current info and check for reasons to stop the engine.
+	info := engine.current[name]
+
 	switch errors.Cause(err) {
 	case nil:
 		engine.config.Logger.Debugf("%q manifold worker completed successfully", name)
 	case errAborted:
 		// The start attempt was aborted, so we haven't really started.
 		engine.config.Logger.Tracef("%q manifold worker bounced while starting", name)
+		// If we have been aborted while trying to start, we are more likely
+		// to be able to start, so reset the start attempts.
+		info.startAttempts = 0
 	case ErrMissing:
 		engine.config.Logger.Tracef("%q manifold worker failed to start: %v", name, err)
 	default:
@@ -580,8 +586,6 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 		err = filter(err)
 	}
 
-	// Copy current info and check for reasons to stop the engine.
-	info := engine.current[name]
 	if info.stopped() {
 		engine.tomb.Kill(errors.Errorf("fatal: unexpected %q manifold worker stop", name))
 	} else if engine.config.IsFatal(err) {
