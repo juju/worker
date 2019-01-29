@@ -20,6 +20,7 @@ import (
 type Logger interface {
 	Tracef(string, ...interface{})
 	Debugf(string, ...interface{})
+	Infof(string, ...interface{})
 	Errorf(string, ...interface{})
 }
 
