@@ -629,8 +629,16 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 			// The task should never run again, and can be removed completely.
 			engine.uninstall(name)
 		default:
+			logFn := engine.config.Logger.Errorf
+			if strings.Contains(err.Error(), "try again") {
+				// We have been asked to retry; since we will do that anyway
+				// with no need of human intervention we should not log this
+				// at the ERROR level but rather switch to INFO instead.
+				logFn = engine.config.Logger.Infof
+			}
+
 			// Something went wrong but we don't know what. Try again soon.
-			engine.config.Logger.Errorf("%q manifold worker returned unexpected error: %v", name, err)
+			logFn("%q manifold worker returned unexpected error: %v", name, err)
 			if tracer, ok := err.(stackTracer); ok {
 				engine.config.Logger.Debugf("stack trace:\n%s", strings.Join(tracer.StackTrace(), "\n"))
 			}
