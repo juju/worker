@@ -629,6 +629,10 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 			// The task should never run again, and can be removed completely.
 			engine.uninstall(name)
 		default:
+			// TODO(achilleasa): checking against strings is flakey as it can break
+			// if the error message changes in the future; a better approach would
+			// be to refactor juju/errors to include a typed TryAgain error with a
+			// IsTryAgain() helper.
 			logFn := engine.config.Logger.Errorf
 			if strings.Contains(err.Error(), "try again") {
 				// We have been asked to retry; since we will do that anyway
