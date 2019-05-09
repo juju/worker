@@ -13,7 +13,7 @@ import (
 	"github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
-	worker "gopkg.in/juju/worker.v1"
+	"gopkg.in/juju/worker.v1"
 
 	"gopkg.in/juju/worker.v1/dependency"
 	"gopkg.in/juju/worker.v1/workertest"
@@ -696,6 +696,10 @@ func (s *EngineSuite) TestConfigValidate(c *gc.C) {
 		}, "BackoffFactor 0.9 must be >= 1",
 	}, {
 		func(config *dependency.EngineConfig) {
+			config.BackoffResetTime = -time.Minute
+		}, "BackoffResetTime is negative",
+	}, {
+		func(config *dependency.EngineConfig) {
 			config.MaxDelay = -time.Second
 		}, "MaxDelay is negative",
 	}, {
@@ -770,6 +774,7 @@ func (s *EngineSuite) TestBackoffFactor(c *gc.C) {
 	config := s.fix.defaultEngineConfig(clock)
 	config.ErrorDelay = time.Second
 	config.BackoffFactor = 2.0
+	config.BackoffResetTime = time.Minute
 	config.MaxDelay = 3 * time.Second
 	s.fix.config = &config
 
@@ -783,24 +788,85 @@ func (s *EngineSuite) TestBackoffFactor(c *gc.C) {
 		mh.AssertStartAttempt(c)
 
 		// Advance further than 1.1 * ErrorDelay to account for max fuzz.
-		clock.WaitAdvance(1200*time.Millisecond, testing.ShortWait, 1)
+		c.Assert(clock.WaitAdvance(1200*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
 		mh.AssertStartAttempt(c)
 
 		// Advance the clock to before 0.9 * 2 * ErrorDelay to ensure
 		// that we don't have another start attempt.
-		clock.WaitAdvance(1700*time.Millisecond, testing.ShortWait, 1)
+		c.Assert(clock.WaitAdvance(1700*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
 		mh.AssertNoStartAttempt(c)
 
 		// Advance further to 1.1 * 2 * ErrorDelay from the previous failed
 		// start, to account for max fuzz.
-		clock.WaitAdvance(600*time.Millisecond, testing.ShortWait, 1)
+		c.Assert(clock.WaitAdvance(600*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
 		mh.AssertStartAttempt(c)
 
 		// Finally hit MaxDelay, so ensure we don't start before 0.9 * MaxDelay.
 		// But do start after 1.1 * MaxDelay.
-		clock.WaitAdvance(2600*time.Millisecond, testing.ShortWait, 1)
+		c.Assert(clock.WaitAdvance(2600*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
 		mh.AssertNoStartAttempt(c)
-		clock.WaitAdvance(800*time.Millisecond, testing.ShortWait, 1)
+		c.Assert(clock.WaitAdvance(800*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
+		mh.AssertStartAttempt(c)
+	})
+}
+
+func (s *EngineSuite) TestBackoffFactorOnError(c *gc.C) {
+	clock := testclock.NewClock(time.Now())
+	config := s.fix.defaultEngineConfig(clock)
+	config.ErrorDelay = time.Second
+	config.BackoffFactor = 2.0
+	config.BackoffResetTime = time.Minute
+	config.MaxDelay = 3 * time.Second
+	s.fix.config = &config
+
+	s.fix.run(c, func(engine *dependency.Engine) {
+
+		mh := newManifoldHarness()
+		err := engine.Install("task", mh.Manifold())
+		c.Assert(err, jc.ErrorIsNil)
+		// We should get the task start called.
+		mh.AssertStartAttempt(c)
+		// Inject an immedate error after start
+		mh.InjectError(c, errors.Errorf("initial boom"))
+
+		// Advance further than 1.1 * ErrorDelay to account for max fuzz.
+		c.Assert(clock.WaitAdvance(1200*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
+		mh.AssertStartAttempt(c)
+		// Wait a bit, but less than BackoffResetTime, and trigger another
+		// error. It is ok that nothing is Waiting, because it is only after the
+		// error happens that the clock is consulted
+		clock.Advance(1000 * time.Millisecond)
+		mh.InjectError(c, errors.Errorf("later boom"))
+
+		// Advance the clock to before 0.9 * 2 * ErrorDelay to ensure
+		// that we don't have another start attempt.
+		c.Assert(clock.WaitAdvance(1700*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
+		mh.AssertNoStartAttempt(c)
+
+		// Advance further to 1.1 * 2 * ErrorDelay from the previous failed
+		// start, to account for max fuzz.
+		c.Assert(clock.WaitAdvance(600*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
+		mh.AssertStartAttempt(c)
+		// Again wait a bit, to be clear that the time we wait before
+		// starting is based on when it died, not when we last started it.
+		clock.Advance(5000 * time.Millisecond)
+		mh.InjectError(c, errors.Errorf("last boom"))
+
+		// Finally hit MaxDelay, so ensure we don't start before 0.9 * MaxDelay.
+		// But do start after 1.1 * MaxDelay.
+		c.Assert(clock.WaitAdvance(2600*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
+		mh.AssertNoStartAttempt(c)
+		c.Assert(clock.WaitAdvance(800*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
+		mh.AssertStartAttempt(c)
+
+		c.Logf("running for 2 minutes")
+		// Now advance longer than the BackoffResetTime, indicating the
+		// worker was running successfully for "long enough" before we
+		// trigger a failure
+		clock.Advance(2 * time.Minute)
+		mh.InjectError(c, errors.Errorf("after successful run"))
+		// Ensure we try to start after a short fuzzed delay
+		c.Assert(clock.WaitAdvance(1200*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
 		mh.AssertStartAttempt(c)
 	})
 }

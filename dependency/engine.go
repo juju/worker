@@ -64,6 +64,14 @@ type EngineConfig struct {
 	// for consecutive start attempts.
 	BackoffFactor float64
 
+	// BackoffResetTime determines if a worker is running for longer than
+	// this time, then any failure will be treated as a 'fresh' failure.
+	// Eg, if this is set to 1 minute, and a service starts and bounces within
+	// the first minute of running, then we will exponentially back off the next
+	// start. However, if it successfully runs for 2 minutes, then any failure
+	// will be immediately retried.
+	BackoffResetTime time.Duration
+
 	// MaxDelay is the maximum delay that the engine will wait after
 	// the exponential backoff due to consecutive start attempts.
 	MaxDelay time.Duration
@@ -92,6 +100,9 @@ func (config *EngineConfig) Validate() error {
 	}
 	if config.BackoffFactor != 0 && config.BackoffFactor < 1 {
 		return errors.Errorf("BackoffFactor %v must be >= 1", config.BackoffFactor)
+	}
+	if config.BackoffResetTime < 0 {
+		return errors.New("BackoffResetTime is negative")
 	}
 	if config.MaxDelay < 0 {
 		return errors.New("MaxDelay is negative")
@@ -376,11 +387,9 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	// ...then update the info, copy it back to the engine, and start a worker
 	// goroutine based on current known state.
 	info.starting = true
-	if delay > 0 {
-		// Don't record the first attempt during manifold install.
-		// This is to avoid the extra backoff on the first failure.
-		info.startAttempts++
-	}
+	// Don't record the first attempt during manifold install.
+	// This is to avoid the extra backoff on the first failure.
+	info.startAttempts++
 	info.err = nil
 	info.abort = make(chan struct{})
 	engine.current[name] = info
@@ -390,7 +399,7 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	// which should make bugs more obvious
 	if delay > time.Duration(0) {
 		if engine.config.BackoffFactor > 0 {
-			delay = time.Duration(float64(delay) * math.Pow(engine.config.BackoffFactor, float64(info.startAttempts-1)))
+			delay = time.Duration(float64(delay) * math.Pow(engine.config.BackoffFactor, float64(info.recentErrors-1)))
 			if engine.config.MaxDelay > 0 && delay > engine.config.MaxDelay {
 				delay = engine.config.MaxDelay
 			}
@@ -551,6 +560,7 @@ func (engine *Engine) gotStarted(name string, worker worker.Worker, resourceLog 
 		info.startAttempts = 0
 		info.resourceLog = resourceLog
 		info.startedTime = engine.config.Clock.Now().UTC()
+		engine.config.Logger.Debugf("%q manifold worker started at %v", name, info.startedTime)
 		engine.current[name] = info
 
 		// Any manifold that declares this one as an input needs to be restarted.
@@ -571,16 +581,31 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 	switch errors.Cause(err) {
 	case nil:
 		engine.config.Logger.Debugf("%q manifold worker completed successfully", name)
+		info.recentErrors = 0
 	case errAborted:
 		// The start attempt was aborted, so we haven't really started.
 		engine.config.Logger.Tracef("%q manifold worker bounced while starting", name)
 		// If we have been aborted while trying to start, we are more likely
 		// to be able to start, so reset the start attempts.
 		info.startAttempts = 0
+		info.recentErrors = 1
 	case ErrMissing:
 		engine.config.Logger.Tracef("%q manifold worker failed to start: %v", name, err)
+		// missing a dependency does (not?) trigger exponential backoff
+		info.recentErrors = 1
 	default:
 		engine.config.Logger.Debugf("%q manifold worker stopped: %v", name, err)
+		now := engine.config.Clock.Now().UTC()
+		timeSinceStarted := now.Sub(info.startedTime)
+		// TODO(jam): 2019-05-09 Config the time-running-before-backoff
+		// startedTime is Zero, then we haven't even successfully started, so treat
+		// it the same way as a successful start followed by a quick failure.
+		if info.startedTime.IsZero() || timeSinceStarted < engine.config.BackoffResetTime {
+			info.recentErrors++
+		} else {
+			// we were able to successfully run for long enough to reset the attempt count
+			info.recentErrors = 1
+		}
 	}
 
 	if filter := engine.manifolds[name].Filter; filter != nil {
@@ -601,6 +626,7 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 		// Keep the start count and start attempts but clear the start timestamps.
 		startAttempts: info.startAttempts,
 		startCount:    info.startCount,
+		recentErrors:  info.recentErrors,
 	}
 	if engine.isDying() {
 		engine.config.Logger.Tracef("permanently stopped %q manifold worker (shutting down)", name)
@@ -729,6 +755,7 @@ type workerInfo struct {
 	startedTime   time.Time
 	startCount    int
 	startAttempts int
+	recentErrors  int
 }
 
 // stopped returns true unless the worker is either assigned or starting.

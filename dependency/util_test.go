@@ -43,13 +43,16 @@ func (fix *engineFixture) worstErrorFunc() dependency.WorstErrorFunc {
 
 func (fix *engineFixture) defaultEngineConfig(clock clock.Clock) dependency.EngineConfig {
 	return dependency.EngineConfig{
-		IsFatal:     fix.isFatalFunc(),
-		WorstError:  fix.worstErrorFunc(),
-		Filter:      fix.filter, // can be nil anyway
-		ErrorDelay:  testing.ShortWait / 2,
-		BounceDelay: testing.ShortWait / 10,
-		Clock:       clock,
-		Logger:      loggo.GetLogger("test"),
+		IsFatal:          fix.isFatalFunc(),
+		WorstError:       fix.worstErrorFunc(),
+		Filter:           fix.filter, // can be nil anyway
+		ErrorDelay:       testing.ShortWait / 2,
+		BounceDelay:      testing.ShortWait / 10,
+		BackoffFactor:    0,
+		MaxDelay:         time.Second,
+		BackoffResetTime: time.Minute,
+		Clock:            clock,
+		Logger:           loggo.GetLogger("test"),
 	}
 }
 
