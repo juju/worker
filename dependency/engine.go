@@ -552,7 +552,6 @@ func (engine *Engine) gotStarted(name string, worker worker.Worker, resourceLog 
 		worker.Kill()
 	default:
 		// It's fine to use this worker; update info and copy back.
-		engine.config.Logger.Debugf("%q manifold worker started", name)
 		info.worker = worker
 		info.starting = false
 		info.startCount++

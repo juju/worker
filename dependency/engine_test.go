@@ -859,7 +859,13 @@ func (s *EngineSuite) TestBackoffFactorOnError(c *gc.C) {
 		c.Assert(clock.WaitAdvance(800*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
 		mh.AssertStartAttempt(c)
 
-		c.Logf("running for 2 minutes")
+		// We need to advance the clock after we have recorded startTime, which
+		// means we need to wait for the engine to notice the started event,
+		// process it, and be ready to process the next event. Installing another
+		// manifold is done in the same loop.
+		err = engine.Install("task2", mh.Manifold())
+		c.Assert(err, jc.ErrorIsNil)
+
 		// Now advance longer than the BackoffResetTime, indicating the
 		// worker was running successfully for "long enough" before we
 		// trigger a failure
