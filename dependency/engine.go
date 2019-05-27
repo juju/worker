@@ -387,8 +387,6 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	// ...then update the info, copy it back to the engine, and start a worker
 	// goroutine based on current known state.
 	info.starting = true
-	// Don't record the first attempt during manifold install.
-	// This is to avoid the extra backoff on the first failure.
 	info.startAttempts++
 	info.err = nil
 	info.abort = make(chan struct{})
@@ -596,7 +594,6 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 		engine.config.Logger.Debugf("%q manifold worker stopped: %v", name, err)
 		now := engine.config.Clock.Now().UTC()
 		timeSinceStarted := now.Sub(info.startedTime)
-		// TODO(jam): 2019-05-09 Config the time-running-before-backoff
 		// startedTime is Zero, then we haven't even successfully started, so treat
 		// it the same way as a successful start followed by a quick failure.
 		if info.startedTime.IsZero() || timeSinceStarted < engine.config.BackoffResetTime {
