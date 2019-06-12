@@ -877,6 +877,49 @@ func (s *EngineSuite) TestBackoffFactorOnError(c *gc.C) {
 	})
 }
 
+func (s *EngineSuite) TestBackoffFactorOverflow(c *gc.C) {
+	clock := testclock.NewClock(time.Now())
+	config := s.fix.defaultEngineConfig(clock)
+	config.ErrorDelay = time.Second
+	config.BackoffFactor = 100.0
+	config.BackoffResetTime = time.Minute
+	config.MaxDelay = time.Minute
+	s.fix.config = &config
+
+	s.fix.run(c, func(engine *dependency.Engine) {
+
+		// What we are testing here is that the first error delay is
+		// approximately one second, then ten seconds, then it maxes
+		// out at one minute
+
+		mh := newManifoldHarness()
+		mh.startError = errors.New("boom")
+		err := engine.Install("task", mh.Manifold())
+		c.Assert(err, jc.ErrorIsNil)
+		// We should get the task start called, but it returns an error.
+		c.Logf("install start attempt")
+		mh.AssertStartAttempt(c)
+
+		// Advance further than 1.1 * ErrorDelay to account for max fuzz.
+		c.Assert(clock.WaitAdvance(1200*time.Millisecond, testing.ShortWait, 1), jc.ErrorIsNil)
+		c.Logf("first failure start attempt")
+		mh.AssertStartAttempt(c)
+
+		// Now we are at the max of one minute delay.
+		// Here we are now testing nested math.
+		// The time.Duration of the full calculation wraps and becomes negative
+		// after 6 failures.
+		// The total time becomes +Inf after 151 iterations
+		// The pow calculation becomes +Inf after 156 iterations.
+		// So to be safe, lets iterate a couple of hundred times.
+		for i := 3; i < 200; i++ {
+			c.Assert(clock.WaitAdvance(70*time.Second, testing.ShortWait, 1), jc.ErrorIsNil)
+			c.Logf("%d failure start attempt", i)
+			mh.AssertStartAttempt(c)
+		}
+	})
+}
+
 func (s *EngineSuite) TestRestartDependentWhenAborted(c *gc.C) {
 	clock := testclock.NewClock(time.Now())
 	config := s.fix.defaultEngineConfig(clock)
