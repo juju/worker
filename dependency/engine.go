@@ -397,9 +397,14 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	// which should make bugs more obvious
 	if delay > time.Duration(0) {
 		if engine.config.BackoffFactor > 0 {
-			delay = time.Duration(float64(delay) * math.Pow(engine.config.BackoffFactor, float64(info.recentErrors-1)))
-			if engine.config.MaxDelay > 0 && delay > engine.config.MaxDelay {
+			// Use the float64 values for max comparison. Otherwise when casting
+			// the float back to a duration we hit the int64 max which is negative.
+			maxDelay := float64(engine.config.MaxDelay)
+			floatDelay := float64(delay) * math.Pow(engine.config.BackoffFactor, float64(info.recentErrors-1))
+			if engine.config.MaxDelay > 0 && floatDelay > maxDelay {
 				delay = engine.config.MaxDelay
+			} else {
+				delay = time.Duration(floatDelay)
 			}
 		}
 		// Fuzz to ±10% of final duration.
