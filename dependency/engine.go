@@ -283,9 +283,8 @@ func (engine *Engine) manifoldsReport() map[string]interface{} {
 	manifolds := map[string]interface{}{}
 	for name, info := range engine.current {
 		report := map[string]interface{}{
-			KeyState:       info.state(),
-			KeyInputs:      engine.manifolds[name].Inputs,
-			KeyResourceLog: resourceLogReport(info.resourceLog),
+			KeyState:  info.state(),
+			KeyInputs: engine.manifolds[name].Inputs,
 		}
 		if info.startCount > 0 {
 			report[KeyStartCount] = info.startCount

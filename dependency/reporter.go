@@ -52,11 +52,6 @@ const (
 	// KeyInputs holds the names of the manifolds on which this one depends.
 	KeyInputs = "inputs"
 
-	// KeyResourceLog holds a slice representing the calls the current worker
-	// made to its getResource func; the type of the output param; and any
-	// error encountered.
-	KeyResourceLog = "resource-log"
-
 	// KeyName holds the name of some resource.
 	KeyName = "name"
 

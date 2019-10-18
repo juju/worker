@@ -98,11 +98,10 @@ func (s *ReportSuite) TestReportStopping(c *gc.C) {
 			"state": "stopping",
 			"manifolds": map[string]interface{}{
 				"task": map[string]interface{}{
-					"state":        "stopping",
-					"start-count":  1,
-					"started":      "2018-08-07 13:15:42",
-					"inputs":       ([]string)(nil),
-					"resource-log": []map[string]interface{}{},
+					"state":       "stopping",
+					"start-count": 1,
+					"started":     "2018-08-07 13:15:42",
+					"inputs":      ([]string)(nil),
 					"report": map[string]interface{}{
 						"key1": "hello there",
 					},
@@ -129,11 +128,10 @@ func (s *ReportSuite) TestReportInputs(c *gc.C) {
 			"state": "started",
 			"manifolds": map[string]interface{}{
 				"task": map[string]interface{}{
-					"state":        "started",
-					"start-count":  1,
-					"started":      "2018-08-07 13:15:42",
-					"inputs":       ([]string)(nil),
-					"resource-log": []map[string]interface{}{},
+					"state":       "started",
+					"start-count": 1,
+					"started":     "2018-08-07 13:15:42",
+					"inputs":      ([]string)(nil),
 					"report": map[string]interface{}{
 						"key1": "hello there",
 					},
@@ -143,10 +141,6 @@ func (s *ReportSuite) TestReportInputs(c *gc.C) {
 					"start-count": 1,
 					"started":     "2018-08-07 13:15:42",
 					"inputs":      []string{"task"},
-					"resource-log": []map[string]interface{}{{
-						"name": "task",
-						"type": "<nil>",
-					}},
 					"report": map[string]interface{}{
 						"key1": "hello there",
 					},
@@ -173,11 +167,6 @@ func (s *ReportSuite) TestReportError(c *gc.C) {
 					"state":  "stopped",
 					"error":  `"missing" not running: dependency not available`,
 					"inputs": []string{"missing"},
-					"resource-log": []map[string]interface{}{{
-						"name":  "missing",
-						"type":  "<nil>",
-						"error": `"missing" not running: dependency not available`,
-					}},
 				},
 			},
 		})
