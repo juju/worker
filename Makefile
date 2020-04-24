@@ -1,4 +1,4 @@
-PROJECT := gopkg.in/juju/worker.v1
+PROJECT := github.com/juju/worker/v2
 
 .PHONY: check-licence check-go check
 
@@ -17,4 +17,4 @@ check-go:
 		echo go fmt is sad: $(GOFMT); \
 		exit 1; \
 	fi )
-	@(go tool vet -all -composites=false -copylocks=false .)
+	@(go vet -all -composites=false -copylocks=false .)

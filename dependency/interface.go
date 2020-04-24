@@ -6,7 +6,7 @@ package dependency
 import (
 	"github.com/juju/errors"
 
-	"gopkg.in/juju/worker.v1"
+	"github.com/juju/worker/v2"
 )
 
 // Manifold defines the behaviour of a node in an Engine's dependency graph. It's

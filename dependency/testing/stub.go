@@ -10,7 +10,7 @@ import (
 
 	"github.com/juju/errors"
 
-	"gopkg.in/juju/worker.v1/dependency"
+	"github.com/juju/worker/v2/dependency"
 )
 
 // NewStubResource creates a single StubResource with the given

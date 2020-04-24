@@ -6,7 +6,7 @@ package workertest
 import (
 	"gopkg.in/tomb.v2"
 
-	"gopkg.in/juju/worker.v1"
+	"github.com/juju/worker/v2"
 )
 
 // NewErrorWorker returns a Worker that runs until Kill()ed; at which point it

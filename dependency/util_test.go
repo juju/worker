@@ -13,9 +13,9 @@ import (
 	gc "gopkg.in/check.v1"
 	"gopkg.in/tomb.v2"
 
-	"gopkg.in/juju/worker.v1"
-	"gopkg.in/juju/worker.v1/dependency"
-	"gopkg.in/juju/worker.v1/workertest"
+	"github.com/juju/worker/v2"
+	"github.com/juju/worker/v2/dependency"
+	"github.com/juju/worker/v2/workertest"
 )
 
 type engineFixture struct {

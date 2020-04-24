@@ -17,7 +17,7 @@ import (
 	gc "gopkg.in/check.v1"
 	"gopkg.in/tomb.v2"
 
-	"gopkg.in/juju/worker.v1"
+	"github.com/juju/worker/v2"
 )
 
 type RunnerSuite struct {

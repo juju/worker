@@ -12,8 +12,8 @@ import (
 	gc "gopkg.in/check.v1"
 	"gopkg.in/tomb.v2"
 
-	"gopkg.in/juju/worker.v1"
-	"gopkg.in/juju/worker.v1/catacomb"
+	"github.com/juju/worker/v2"
+	"github.com/juju/worker/v2/catacomb"
 )
 
 type CatacombSuite struct {
