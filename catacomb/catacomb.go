@@ -278,6 +278,11 @@ func (e *errWithStackTrace) StackTrace() []string {
 	return result
 }
 
+// Panicked returns true if this error originated from a panic/recover.
+func (e *errWithStackTrace) Panicked() bool {
+	return true
+}
+
 // runSafely will ensure that the function is run, and any error is returned.
 // If there is a panic, then that will be returned as an error.
 func runSafely(f func() error) (err error) {

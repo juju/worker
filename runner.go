@@ -4,6 +4,7 @@
 package worker
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -404,6 +405,12 @@ func (runner *Runner) startWorker(req startReq) {
 	info.restartDelay = 0
 }
 
+type panicError interface {
+	error
+	StackTrace() []string
+	Panicked() bool
+}
+
 // workerDone responds when a worker has finished or failed
 // to start. It maintains the runner.finalError field and
 // restarts the worker if necessary.
@@ -415,8 +422,13 @@ func (runner *Runner) workerDone(info doneInfo) {
 		return
 	}
 	if info.err != nil {
+		errStr := info.err.Error()
+		if errWithStack, ok := info.err.(panicError); ok && errWithStack.Panicked() {
+			// Panics should always have the full stacktrace in the error log.
+			errStr = strings.Join(append([]string{errStr}, errWithStack.StackTrace()...), "\n")
+		}
 		if runner.params.IsFatal(info.err) {
-			runner.params.Logger.Errorf("fatal %q: %v", info.id, info.err)
+			runner.params.Logger.Errorf("fatal %q: %s", info.id, errStr)
 			if runner.finalError == nil || runner.params.MoreImportant(info.err, runner.finalError) {
 				runner.finalError = info.err
 			}
@@ -427,7 +439,7 @@ func (runner *Runner) workerDone(info doneInfo) {
 			}
 			return
 		}
-		runner.params.Logger.Errorf("exited %q: %v", info.id, info.err)
+		runner.params.Logger.Errorf("exited %q: %s", info.id, errStr)
 	}
 	if workerInfo.start == nil {
 		runner.params.Logger.Debugf("no restart, removing %q from known workers", info.id)
