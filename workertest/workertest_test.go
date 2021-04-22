@@ -10,7 +10,7 @@ import (
 	"github.com/juju/testing"
 	gc "gopkg.in/check.v1"
 
-	"gopkg.in/juju/worker.v1/workertest"
+	"github.com/juju/worker/v1/workertest"
 )
 
 type Suite struct {
