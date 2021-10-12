@@ -275,7 +275,7 @@ func (runner *Runner) WaitWorker(id string, maxWait time.Duration) error {
 	if maxWait > 0 {
 		after = time.After(maxWait)
 	}
-	// Block until the runner is killed or the work is gone.
+	// Block until the runner is killed or the worker is gone.
 	select {
 	case <-runner.tomb.Dead():
 	case <-gone:
@@ -331,16 +331,21 @@ func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
 		err error
 	}
 	wc := make(chan workerResult, 1)
-	stopped := false
+	stopped := make(chan struct{})
 	go func() {
 		defer runner.mu.Unlock()
-		for !stopped {
-			// Note: sync.Condition.Wait unlocks the mutex before
-			// waiting, then locks it again before returning.
-			runner.workersChangedCond.Wait()
-			if w, err := getWorker(); err != nil || w != nil {
-				wc <- workerResult{w, err}
+		for {
+			select {
+			case <-stopped:
 				return
+			default:
+				// Note: sync.Condition.Wait unlocks the mutex before
+				// waiting, then locks it again before returning.
+				runner.workersChangedCond.Wait()
+				if w, err := getWorker(); err != nil || w != nil {
+					wc <- workerResult{w, err}
+					return
+				}
 			}
 		}
 	}()
@@ -367,9 +372,7 @@ func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
 	// than needed, but this shouldn't be a problem as in practice
 	// almost all the time Worker should not need to start the
 	// goroutine.
-	runner.mu.Lock()
-	stopped = true
-	runner.mu.Unlock()
+	close(stopped)
 	runner.workersChangedCond.Broadcast()
 	return nil, ErrStopped
 }
