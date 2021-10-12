@@ -13,7 +13,7 @@ import (
 	"github.com/juju/errors"
 	"gopkg.in/tomb.v2"
 
-	"github.com/juju/worker/v2"
+	"github.com/juju/worker/v3"
 )
 
 // Logger represents the various logging methods used by the runner.
