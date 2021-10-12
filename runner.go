@@ -18,9 +18,8 @@ import (
 const DefaultRestartDelay = 3 * time.Second
 
 var (
-	ErrNotFound = errors.New("worker not found")
-	ErrStopped  = errors.New("aborted waiting for worker")
-	ErrDead     = errors.New("worker runner is not running")
+	ErrStopped = errors.New("aborted waiting for worker")
+	ErrDead    = errors.New("worker runner is not running")
 )
 
 // Runner runs a set of workers, restarting them as necessary
@@ -106,7 +105,7 @@ func (i *workerInfo) status() string {
 type startReq struct {
 	id    string
 	start func() (Worker, error)
-	reply chan struct{}
+	reply chan error
 }
 
 type startInfo struct {
@@ -211,10 +210,7 @@ func NewRunner(p RunnerParams) *Runner {
 
 // StartWorker starts a worker running associated with the given id.
 // The startFunc function will be called to create the worker;
-// when the worker exits, it will be restarted as long as it
-// does not return a fatal error.
-//
-// If there is already a worker with the given id, nothing will be done.
+// when the worker exits, an AlreadyExists error will be returned.
 //
 // StartWorker returns ErrDead if the runner is not running.
 func (runner *Runner) StartWorker(id string, startFunc func() (Worker, error)) error {
@@ -222,15 +218,15 @@ func (runner *Runner) StartWorker(id string, startFunc func() (Worker, error)) e
 	// returns, we're guaranteed that the worker is installed
 	// when we return, so Worker will see it if called
 	// immediately afterwards.
-	reply := make(chan struct{})
+	reply := make(chan error)
 	select {
 	case runner.startc <- startReq{id, startFunc, reply}:
 		// We're certain to get a reply because the startc channel is synchronous
 		// so if we succeed in sending on it, we know that the run goroutine has entered
 		// the startc arm of the select, and that calls startWorker (which never blocks)
-		// and then immedaitely closes the reply channel.
-		<-reply
-		return nil
+		// and then immediately sends any error to the reply channel.
+		err := <-reply
+		return err
 	case <-runner.tomb.Dead():
 	}
 	return ErrDead
@@ -247,6 +243,46 @@ func (runner *Runner) StopWorker(id string) error {
 	case <-runner.tomb.Dead():
 	}
 	return ErrDead
+}
+
+// WaitWorker returns when the specified work is no longer
+// known to the runner.
+func (runner *Runner) WaitWorker(id string, maxWait time.Duration) error {
+	// done is used to ensure the go routine always exits.
+	done := make(chan struct{})
+	defer close(done)
+
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		ticker := time.NewTicker(time.Second)
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				runner.mu.Lock()
+				_, ok := runner.workers[id]
+				runner.mu.Unlock()
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+
+	var after <-chan time.Time
+	if maxWait > 0 {
+		after = time.After(maxWait)
+	}
+	// Block until the runner is killed or the worker is gone.
+	select {
+	case <-runner.tomb.Dead():
+	case <-gone:
+	case <-after:
+		return errors.Errorf("worker %q still exists after %v", id, maxWait)
+	}
+	return nil
 }
 
 // Wait implements Worker.Wait
@@ -279,7 +315,7 @@ func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
 		if info == nil {
 			// No entry for the id means the worker
 			// will never become available.
-			return nil, ErrNotFound
+			return nil, errors.NotFoundf("worker %q", id)
 		}
 		return info.worker, nil
 	}
@@ -295,22 +331,27 @@ func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
 		err error
 	}
 	wc := make(chan workerResult, 1)
-	stopped := false
+	stopped := make(chan struct{})
 	go func() {
 		defer runner.mu.Unlock()
-		for !stopped {
-			// Note: sync.Condition.Wait unlocks the mutex before
-			// waiting, then locks it again before returning.
-			runner.workersChangedCond.Wait()
-			if w, err := getWorker(); err != nil || w != nil {
-				wc <- workerResult{w, err}
+		for {
+			select {
+			case <-stopped:
 				return
+			default:
+				// Note: sync.Condition.Wait unlocks the mutex before
+				// waiting, then locks it again before returning.
+				runner.workersChangedCond.Wait()
+				if w, err := getWorker(); err != nil || w != nil {
+					wc <- workerResult{w, err}
+					return
+				}
 			}
 		}
 	}()
 	select {
 	case w := <-wc:
-		if w.err != nil && errors.Cause(w.err) == ErrNotFound {
+		if errors.IsNotFound(w.err) {
 			// If it wasn't found, it's possible that's because
 			// the whole thing has shut down, so
 			// check for dying so that we don't mislead
@@ -331,9 +372,7 @@ func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
 	// than needed, but this shouldn't be a problem as in practice
 	// almost all the time Worker should not need to start the
 	// goroutine.
-	runner.mu.Lock()
-	stopped = true
-	runner.mu.Unlock()
+	close(stopped)
 	runner.workersChangedCond.Broadcast()
 	return nil, ErrStopped
 }
@@ -353,8 +392,7 @@ func (runner *Runner) run() error {
 
 		case req := <-runner.startc:
 			runner.params.Logger.Debugf("start %q", req.id)
-			runner.startWorker(req)
-			close(req.reply)
+			req.reply <- runner.startWorker(req)
 
 		case id := <-runner.stopc:
 			runner.params.Logger.Debugf("stop %q", id)
@@ -376,10 +414,10 @@ func (runner *Runner) run() error {
 
 // startWorker responds when a worker has been started
 // by calling StartWorker.
-func (runner *Runner) startWorker(req startReq) {
+func (runner *Runner) startWorker(req startReq) error {
 	if runner.isDying {
 		runner.params.Logger.Infof("ignoring start request for %q when dying", req.id)
-		return
+		return nil
 	}
 	info := runner.workers[req.id]
 	if info == nil {
@@ -391,18 +429,9 @@ func (runner *Runner) startWorker(req startReq) {
 			started:      runner.params.Clock.Now().UTC(),
 		}
 		go runner.runWorker(0, req.id, req.start)
-		return
+		return nil
 	}
-	if !info.stopping {
-		// The worker is already running, so leave it alone
-		return
-	}
-	// The worker previously existed and is
-	// currently being stopped.  When it eventually
-	// does stop, we'll restart it immediately with
-	// the new start function.
-	info.start = req.start
-	info.restartDelay = 0
+	return errors.AlreadyExistsf("worker %q", req.id)
 }
 
 type panicError interface {

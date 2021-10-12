@@ -13,7 +13,7 @@ import (
 	"github.com/juju/errors"
 	"gopkg.in/tomb.v2"
 
-	"github.com/juju/worker/v2"
+	"github.com/juju/worker/v3"
 )
 
 // Logger represents the various logging methods used by the runner.
@@ -595,7 +595,12 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 		// missing a dependency does (not?) trigger exponential backoff
 		info.recentErrors = 1
 	default:
-		engine.config.Logger.Debugf("%q manifold worker stopped: %v", name, err)
+		if tracer, ok := err.(stackTracer); ok {
+			engine.config.Logger.Debugf("%q manifold worker stopped: %v\nstack trace:\n%s",
+				name, err, strings.Join(tracer.StackTrace(), "\n"))
+		} else {
+			engine.config.Logger.Debugf("%q manifold worker stopped: %v", name, err)
+		}
 		now := engine.config.Clock.Now().UTC()
 		timeSinceStarted := now.Sub(info.startedTime)
 		// startedTime is Zero, then we haven't even successfully started, so treat
@@ -669,9 +674,6 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 
 			// Something went wrong but we don't know what. Try again soon.
 			logFn("%q manifold worker returned unexpected error: %v", name, err)
-			if tracer, ok := err.(stackTracer); ok {
-				engine.config.Logger.Debugf("stack trace:\n%s", strings.Join(tracer.StackTrace(), "\n"))
-			}
 			engine.requestStart(name, engine.config.ErrorDelay)
 		}
 	}

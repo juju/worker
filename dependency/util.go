@@ -6,7 +6,7 @@ package dependency
 import (
 	"github.com/juju/errors"
 
-	"github.com/juju/worker/v2"
+	"github.com/juju/worker/v3"
 )
 
 // Installer exposes an Engine's Install method.
