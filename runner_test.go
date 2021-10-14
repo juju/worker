@@ -86,7 +86,7 @@ func (*RunnerSuite) TestOneWorkerRestart(c *gc.C) {
 	starter.assertStarted(c, false)
 }
 
-func (*RunnerSuite) TestWaitWorker(c *gc.C) {
+func (*RunnerSuite) TestReplaceWorker(c *gc.C) {
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      allFatal,
 		RestartDelay: 3 * time.Second,
@@ -103,57 +103,34 @@ func (*RunnerSuite) TestWaitWorker(c *gc.C) {
 	err = runner.StopWorker("id")
 	c.Assert(err, jc.ErrorIsNil)
 
-	done := make(chan error)
-	go func() {
-		done <- runner.WaitWorker("id", 0)
-	}()
+	// Another worker to replace the first one.
+	anotherStarter := newTestWorkerStarter()
 
-	select {
-	case <-time.After(testing.ShortWait):
-	case <-done:
-		c.Fatalf("wait worker didn't wait for worker to stop")
-	}
+	err = runner.ReplaceWorker("id", anotherStarter.start)
+	c.Assert(err, jc.ErrorIsNil)
+
+	// The worker isn't started yet cause the first one is not stopped.
+	anotherStarter.assertNeverStarted(c, time.Millisecond)
 
 	starter.stopWait <- struct{}{}
-	select {
-	case <-time.After(testing.LongWait):
-		c.Fatalf("timed out waiting for worker to stop")
-	case err := <-done:
-		c.Assert(err, jc.ErrorIsNil)
-	}
-	// Wait for non-existent worker exits immediately.
-	err = runner.WaitWorker("id", 0)
-	c.Assert(err, jc.ErrorIsNil)
+	starter.assertStarted(c, false)
+	anotherStarter.assertStarted(c, true)
+	c.Assert(worker.Stop(runner), gc.IsNil)
 }
 
-func (*RunnerSuite) TestWaitWorkerTimeout(c *gc.C) {
+func (*RunnerSuite) TestReplaceWorkerNoneExists(c *gc.C) {
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      allFatal,
 		RestartDelay: 3 * time.Second,
 	})
 	starter := newTestWorkerStarter()
-	starter.stopWait = make(chan struct{})
 
-	// Start a worker, and wait for it.
-	err := runner.StartWorker("id", starter.start)
+	err := runner.ReplaceWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
+
+	starter.die <- nil
 	starter.assertStarted(c, true)
-
-	// Stop the worker, which will block...
-	err = runner.StopWorker("id")
-	c.Assert(err, jc.ErrorIsNil)
-
-	done := make(chan error)
-	go func() {
-		done <- runner.WaitWorker("id", time.Second)
-	}()
-
-	select {
-	case <-time.After(testing.LongWait):
-		c.Fatalf("waiting for worker to timeout")
-	case err := <-done:
-		c.Assert(err, gc.ErrorMatches, `worker "id" still exists after 1s`)
-	}
+	c.Assert(worker.Stop(runner), gc.IsNil)
 }
 
 func (*RunnerSuite) TestOneWorkerStartFatalError(c *gc.C) {
