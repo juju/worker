@@ -86,7 +86,7 @@ func (*RunnerSuite) TestOneWorkerRestart(c *gc.C) {
 	starter.assertStarted(c, false)
 }
 
-func (*RunnerSuite) TestReplaceWorker(c *gc.C) {
+func (*RunnerSuite) TestStopAndWaitWorker(c *gc.C) {
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      allFatal,
 		RestartDelay: 3 * time.Second,
@@ -99,38 +99,101 @@ func (*RunnerSuite) TestReplaceWorker(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 
-	// Stop the worker, which will block...
-	err = runner.StopWorker("id")
-	c.Assert(err, jc.ErrorIsNil)
+	errc := make(chan error)
+	go func() {
+		errc <- runner.StopAndRemoveWorker("id", nil)
+	}()
 
-	// Another worker to replace the first one.
-	anotherStarter := newTestWorkerStarter()
-
-	err = runner.ReplaceWorker("id", anotherStarter.start)
-	c.Assert(err, jc.ErrorIsNil)
-
-	// The worker isn't started yet cause the first one is not stopped.
-	anotherStarter.assertNeverStarted(c, time.Millisecond)
+	select {
+	case <-time.After(testing.ShortWait):
+	case err := <-errc:
+		c.Fatalf("got unexpected result, error %q", err)
+	}
 
 	starter.stopWait <- struct{}{}
-	starter.assertStarted(c, false)
-	anotherStarter.assertStarted(c, true)
-	c.Assert(worker.Stop(runner), gc.IsNil)
+	select {
+	case <-time.After(testing.LongWait):
+		c.Fatalf("timed out waiting for worker to stop")
+	case err := <-errc:
+		c.Assert(err, jc.ErrorIsNil)
+	}
+	// Stop again returns not found.
+	err = runner.StopAndRemoveWorker("id", nil)
+	c.Assert(err, jc.Satisfies, errors.IsNotFound)
 }
 
-func (*RunnerSuite) TestReplaceWorkerNoneExists(c *gc.C) {
+func (*RunnerSuite) TestStopAndWaitWorkerReturnsWorkerError(c *gc.C) {
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      allFatal,
 		RestartDelay: 3 * time.Second,
 	})
 	starter := newTestWorkerStarter()
+	starter.stopWait = make(chan struct{})
+	starter.killErr = errors.New("boom")
 
-	err := runner.ReplaceWorker("id", starter.start)
+	// Start a worker, and wait for it.
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
-
-	starter.die <- nil
 	starter.assertStarted(c, true)
-	c.Assert(worker.Stop(runner), gc.IsNil)
+
+	errc := make(chan error)
+	go func() {
+		errc <- runner.StopAndRemoveWorker("id", nil)
+	}()
+
+	select {
+	case <-time.After(testing.ShortWait):
+	case err := <-errc:
+		c.Fatalf("got unexpected result, error %q", err)
+	}
+
+	starter.stopWait <- struct{}{}
+	select {
+	case <-time.After(100 * testing.LongWait):
+		c.Fatalf("timed out waiting for worker to stop")
+	case err := <-errc:
+		c.Assert(err, gc.Equals, starter.killErr)
+	}
+}
+
+func (*RunnerSuite) TestStopAndWaitWorkerWithAbort(c *gc.C) {
+	t0 := time.Now()
+	clock := testclock.NewClock(t0)
+	runner := worker.NewRunner(worker.RunnerParams{
+		IsFatal:      noneFatal,
+		RestartDelay: time.Second,
+		Clock:        clock,
+	})
+	defer worker.Stop(runner)
+	starter := newTestWorkerStarter()
+	starter.startErr = errors.Errorf("test error")
+	runner.StartWorker("id", starter.start)
+
+	// Wait for the runner start waiting for the restart delay.
+	select {
+	case <-clock.Alarms():
+	case <-time.After(longWait):
+		c.Fatalf("runner never slept")
+	}
+
+	errc := make(chan error, 1)
+	stop := make(chan struct{})
+	go func() {
+		errc <- runner.StopAndRemoveWorker("id", stop)
+	}()
+	select {
+	case err := <-errc:
+		c.Fatalf("got unexpected result, error %q", err)
+	case <-time.After(shortWait):
+	}
+
+	close(stop)
+	select {
+	case err := <-errc:
+		c.Assert(errors.Cause(err), gc.Equals, worker.ErrAborted)
+	case <-time.After(longWait):
+		c.Fatalf("timed out waiting for worker")
+	}
 }
 
 func (*RunnerSuite) TestOneWorkerStartFatalError(c *gc.C) {
@@ -499,7 +562,7 @@ func (*RunnerSuite) TestWorkerWithAbort(c *gc.C) {
 	close(stop)
 	select {
 	case err := <-errc:
-		c.Assert(errors.Cause(err), gc.Equals, worker.ErrStopped)
+		c.Assert(errors.Cause(err), gc.Equals, worker.ErrAborted)
 	case <-time.After(longWait):
 		c.Fatalf("timed out waiting for worker")
 	}
@@ -742,6 +805,10 @@ type testWorkerStarter struct {
 	// error when asked to stop.
 	stopErr error
 
+	// If killErr is non-nil, the worker will die with this
+	// error when killed.
+	killErr error
+
 	// The hook function is called after starting the worker.
 	hook func()
 
@@ -796,6 +863,7 @@ func (starter *testWorkerStarter) start() (worker.Worker, error) {
 	}
 	task := &testWorker{
 		starter: starter,
+		err:     starter.killErr,
 	}
 	starter.startNotify <- true
 	task.tomb.Go(task.run)
@@ -804,11 +872,12 @@ func (starter *testWorkerStarter) start() (worker.Worker, error) {
 
 type testWorker struct {
 	starter *testWorkerStarter
+	err     error
 	tomb    tomb.Tomb
 }
 
 func (t *testWorker) Kill() {
-	t.tomb.Kill(nil)
+	t.tomb.Kill(t.err)
 }
 
 func (t *testWorker) Wait() error {
@@ -836,7 +905,7 @@ func (t *testWorker) run() (err error) {
 	return err
 }
 
-// errorWorker holds a worker that immediately dies with an error.g
+// errorWorker holds a worker that immediately dies with an error.
 type errorWorker struct {
 	err error
 }

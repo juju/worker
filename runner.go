@@ -18,7 +18,7 @@ import (
 const DefaultRestartDelay = 3 * time.Second
 
 var (
-	ErrStopped = errors.New("aborted waiting for worker")
+	ErrAborted = errors.New("aborted waiting for worker")
 	ErrDead    = errors.New("worker runner is not running")
 )
 
@@ -27,7 +27,6 @@ var (
 type Runner struct {
 	tomb     tomb.Tomb
 	startc   chan startReq
-	replacec chan startReq
 	stopc    chan string
 	donec    chan doneInfo
 	startedc chan startInfo
@@ -80,12 +79,6 @@ type workerInfo struct {
 	// and will be removed when its goroutine exits.
 	start func() (Worker, error)
 
-	// replaceStart holds a function to create a new
-	// worker with the same id when the current one stops.
-	// If this is nil, the worker will be removed its
-	// goroutine exits.
-	replaceStart func() (Worker, error)
-
 	// restartDelay holds the length of time that runWorker
 	// will wait before calling the start function.
 	restartDelay time.Duration
@@ -94,6 +87,10 @@ type workerInfo struct {
 	// being killed. The runWorker goroutine will
 	// still exist while this is true.
 	stopping bool
+
+	// done is used to signal when the worker has finished
+	// running and is removed from the runner.
+	done chan struct{}
 
 	// started holds the time the worker was started.
 	started time.Time
@@ -204,7 +201,6 @@ func NewRunner(p RunnerParams) *Runner {
 
 	runner := &Runner{
 		startc:   make(chan startReq),
-		replacec: make(chan startReq),
 		stopc:    make(chan string),
 		donec:    make(chan doneInfo),
 		startedc: make(chan startInfo),
@@ -239,24 +235,6 @@ func (runner *Runner) StartWorker(id string, startFunc func() (Worker, error)) e
 	return ErrDead
 }
 
-// ReplaceWorker waits for the worker with the given id to stop. If then
-// starts a new worker with the same id using the startFunc to create the
-// replacement worker. If the worker doesn't already exist, this behaves
-// like StartWorker().
-func (runner *Runner) ReplaceWorker(id string, startFunc func() (Worker, error)) error {
-	reply := make(chan error)
-	select {
-	case runner.replacec <- startReq{id, startFunc, reply}:
-		// We're certain to get a reply because the replacec channel is synchronous
-		// so if we succeed in sending on it, we know that the run goroutine has entered
-		// the replacec arm of the select, and the functionality will always eventually
-		// return (maybe after a timeout) and then immediately sends any error to the reply channel.
-		return <-reply
-	case <-runner.tomb.Dead():
-	}
-	return ErrDead
-}
-
 // StopWorker stops the worker associated with the given id.
 // It does nothing if there is no such worker.
 //
@@ -268,6 +246,26 @@ func (runner *Runner) StopWorker(id string) error {
 	case <-runner.tomb.Dead():
 	}
 	return ErrDead
+}
+
+// StopAndRemoveWorker stops the worker and returns any error reported by
+// the worker, waiting for the worker to be no longer known to the runner.
+// If it was stopped while waiting, StopAndRemoveWorker will return ErrAborted.
+//
+// StopAndRemoveWorker returns ErrDead if the runner is not running.
+func (runner *Runner) StopAndRemoveWorker(id string, abort <-chan struct{}) error {
+	w, done, err := runner.workerInfo(id, abort)
+	if err != nil {
+		return err
+	}
+	workerErr := Stop(w)
+
+	select {
+	case <-abort:
+	case <-done:
+		return workerErr
+	}
+	return ErrAborted
 }
 
 // Wait implements Worker.Wait
@@ -287,33 +285,48 @@ func (runner *Runner) Kill() {
 // stopping waiting if it receives a value on the stop channel.
 //
 // If there is no worker started with the given id, Worker
-// will return ErrNotFound. If it was stopped while
-// waiting, Worker will return ErrStopped. If the runner
+// will return ErrNotFound. If it was aborted while
+// waiting, Worker will return ErrAborted. If the runner
 // has been killed while waiting, Worker will return ErrDead.
-func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
+func (runner *Runner) Worker(id string, abort <-chan struct{}) (Worker, error) {
+	w, _, err := runner.workerInfo(id, abort)
+	return w, err
+}
+
+func (runner *Runner) workerInfo(id string, abort <-chan struct{}) (Worker, <-chan struct{}, error) {
 	runner.mu.Lock()
 	// getWorker returns the current worker for the id
 	// and reports an ErrNotFound error if the worker
 	// isn't found.
-	getWorker := func() (Worker, error) {
+	getWorker := func() (Worker, <-chan struct{}, error) {
 		info := runner.workers[id]
 		if info == nil {
 			// No entry for the id means the worker
 			// will never become available.
-			return nil, errors.NotFoundf("worker %q", id)
+			return nil, nil, errors.NotFoundf("worker %q", id)
 		}
-		return info.worker, nil
+		return info.worker, info.done, nil
 	}
-	if w, err := getWorker(); err != nil || w != nil {
+	if w, done, err := getWorker(); err != nil || w != nil {
 		// The worker is immediately available  (or we know it's
 		// not going to become available). No need
 		// to block waiting for it.
 		runner.mu.Unlock()
-		return w, err
+		// If it wasn't found, it's possible that's because
+		// the whole thing has shut down, so
+		// check for dying so that we don't mislead
+		// our caller.
+		select {
+		case <-runner.tomb.Dying():
+			return nil, nil, ErrDead
+		default:
+		}
+		return w, done, err
 	}
 	type workerResult struct {
-		w   Worker
-		err error
+		w    Worker
+		done <-chan struct{}
+		err  error
 	}
 	wc := make(chan workerResult, 1)
 	stopped := make(chan struct{})
@@ -327,8 +340,8 @@ func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
 				// Note: sync.Condition.Wait unlocks the mutex before
 				// waiting, then locks it again before returning.
 				runner.workersChangedCond.Wait()
-				if w, err := getWorker(); err != nil || w != nil {
-					wc <- workerResult{w, err}
+				if w, done, err := getWorker(); err != nil || w != nil {
+					wc <- workerResult{w, done, err}
 					return
 				}
 			}
@@ -343,14 +356,14 @@ func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
 			// our caller.
 			select {
 			case <-runner.tomb.Dying():
-				return nil, ErrDead
+				return nil, nil, ErrDead
 			default:
 			}
 		}
-		return w.w, w.err
+		return w.w, w.done, w.err
 	case <-runner.tomb.Dying():
-		return nil, ErrDead
-	case <-stop:
+		return nil, nil, ErrDead
+	case <-abort:
 	}
 	// Stop our wait goroutine.
 	// Strictly speaking this can wake up more waiting Worker calls
@@ -359,7 +372,7 @@ func (runner *Runner) Worker(id string, stop <-chan struct{}) (Worker, error) {
 	// goroutine.
 	close(stopped)
 	runner.workersChangedCond.Broadcast()
-	return nil, ErrStopped
+	return nil, nil, ErrAborted
 }
 
 func (runner *Runner) run() error {
@@ -378,11 +391,6 @@ func (runner *Runner) run() error {
 		case req := <-runner.startc:
 			runner.params.Logger.Debugf("start %q", req.id)
 			req.reply <- runner.startWorker(req)
-
-		case req := <-runner.replacec:
-			runner.params.Logger.Debugf("replace %q", req.id)
-			runner.replaceWorker(req)
-			req.reply <- nil
 
 		case id := <-runner.stopc:
 			runner.params.Logger.Debugf("stop %q", id)
@@ -417,30 +425,12 @@ func (runner *Runner) startWorker(req startReq) error {
 			start:        req.start,
 			restartDelay: runner.params.RestartDelay,
 			started:      runner.params.Clock.Now().UTC(),
+			done:         make(chan struct{}, 1),
 		}
 		go runner.runWorker(0, req.id, req.start)
 		return nil
 	}
 	return errors.AlreadyExistsf("worker %q", req.id)
-}
-
-func (runner *Runner) replaceWorker(req startReq) {
-	if runner.isDying {
-		runner.params.Logger.Infof("ignoring replace request for %q when dying", req.id)
-	}
-	runner.mu.Lock()
-	defer runner.mu.Unlock()
-	info := runner.workers[req.id]
-	if info != nil {
-		info.replaceStart = req.start
-		return
-	}
-	runner.workers[req.id] = &workerInfo{
-		start:        req.start,
-		restartDelay: runner.params.RestartDelay,
-		started:      runner.params.Clock.Now().UTC(),
-	}
-	go runner.runWorker(0, req.id, req.start)
 }
 
 type panicError interface {
@@ -456,7 +446,7 @@ func (runner *Runner) workerDone(info doneInfo) {
 	workerInfo := runner.workers[info.id]
 	if !workerInfo.stopping && info.err == nil {
 		runner.params.Logger.Debugf("removing %q from known workers", info.id)
-		runner.removeWorker(info.id)
+		runner.removeWorker(info.id, workerInfo.done)
 		return
 	}
 	if info.err != nil {
@@ -470,7 +460,7 @@ func (runner *Runner) workerDone(info doneInfo) {
 			if runner.finalError == nil || runner.params.MoreImportant(info.err, runner.finalError) {
 				runner.finalError = info.err
 			}
-			runner.removeWorker(info.id)
+			runner.removeWorker(info.id, workerInfo.done)
 			if !runner.isDying {
 				runner.isDying = true
 				runner.killAll()
@@ -479,31 +469,25 @@ func (runner *Runner) workerDone(info doneInfo) {
 		}
 		runner.params.Logger.Errorf("exited %q: %s", info.id, errStr)
 	}
-	if workerInfo.start == nil && workerInfo.replaceStart == nil {
+	if workerInfo.start == nil {
 		runner.params.Logger.Debugf("no restart, removing %q from known workers", info.id)
 
 		// The worker has been deliberately stopped;
 		// we can now remove it from the list of workers.
-		runner.removeWorker(info.id)
+		runner.removeWorker(info.id, workerInfo.done)
 		return
 	}
-	restartDelay := workerInfo.restartDelay
-	if workerInfo.replaceStart != nil {
-		runner.params.Logger.Debugf("worker %q is being replaced", info.id)
-		workerInfo.start = workerInfo.replaceStart
-		workerInfo.replaceStart = nil
-		restartDelay = 0
-	}
-	go runner.runWorker(restartDelay, info.id, workerInfo.start)
+	go runner.runWorker(workerInfo.restartDelay, info.id, workerInfo.start)
 	workerInfo.restartDelay = runner.params.RestartDelay
 }
 
 // removeWorker removes the worker with the given id from the
 // set of current workers. This should only be called when
 // the worker is not running.
-func (runner *Runner) removeWorker(id string) {
+func (runner *Runner) removeWorker(id string, removed chan<- struct{}) {
 	runner.mu.Lock()
 	delete(runner.workers, id)
+	removed <- struct{}{}
 	runner.mu.Unlock()
 }
 
