@@ -313,6 +313,15 @@ func (runner *Runner) Worker(id string, abort <-chan struct{}) (Worker, error) {
 		// not going to become available). No need
 		// to block waiting for it.
 		runner.mu.Unlock()
+		// If it wasn't found, it's possible that's because
+		// the whole thing has shut down, so
+		// check for dying so that we don't mislead
+		// our caller.
+		select {
+		case <-runner.tomb.Dying():
+			return nil, ErrDead
+		default:
+		}
 		return w, err
 	}
 	type workerResult struct {
