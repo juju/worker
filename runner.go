@@ -254,17 +254,21 @@ func (runner *Runner) StopWorker(id string) error {
 //
 // StopAndRemoveWorker returns ErrDead if the runner is not running.
 func (runner *Runner) StopAndRemoveWorker(id string, abort <-chan struct{}) error {
-	// workerInfo contains the done channel to signal that the worker has
-	// been removed from the runner.
-	// If it's not there, then Worker() returns not found anyway.
-	runner.mu.Lock()
-	workerInfo, ok := runner.workers[id]
-	runner.mu.Unlock()
 	w, err := runner.Worker(id, abort)
-	if err != nil || !ok {
+	if err != nil {
 		return err
 	}
 	workerErr := Stop(w)
+
+	// workerInfo contains the done channel to signal that the worker has
+	// been removed from the runner. If it's not there, the worker has
+	// already been removed.
+	runner.mu.Lock()
+	workerInfo, ok := runner.workers[id]
+	runner.mu.Unlock()
+	if !ok {
+		return workerErr
+	}
 
 	select {
 	case <-abort:
