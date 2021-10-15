@@ -254,30 +254,18 @@ func (runner *Runner) StopWorker(id string) error {
 //
 // StopAndRemoveWorker returns ErrDead if the runner is not running.
 func (runner *Runner) StopAndRemoveWorker(id string, abort <-chan struct{}) error {
-	w, err := runner.Worker(id, abort)
+	w, done, err := runner.workerInfo(id, abort)
 	if err != nil {
 		return err
 	}
 	workerErr := Stop(w)
 
-	// workerInfo contains the done channel to signal that the worker has
-	// been removed from the runner. If it's not there, the worker has
-	// already been removed.
-	runner.mu.Lock()
-	workerInfo, ok := runner.workers[id]
-	runner.mu.Unlock()
-	if !ok {
-		return workerErr
-	}
-
 	select {
 	case <-abort:
-		return ErrAborted
-	case <-workerInfo.done:
+	case <-done:
 		return workerErr
-	case <-runner.tomb.Dying():
 	}
-	return ErrDead
+	return ErrAborted
 }
 
 // Wait implements Worker.Wait
@@ -301,20 +289,25 @@ func (runner *Runner) Kill() {
 // waiting, Worker will return ErrAborted. If the runner
 // has been killed while waiting, Worker will return ErrDead.
 func (runner *Runner) Worker(id string, abort <-chan struct{}) (Worker, error) {
+	w, _, err := runner.workerInfo(id, abort)
+	return w, err
+}
+
+func (runner *Runner) workerInfo(id string, abort <-chan struct{}) (Worker, <-chan struct{}, error) {
 	runner.mu.Lock()
 	// getWorker returns the current worker for the id
 	// and reports an ErrNotFound error if the worker
 	// isn't found.
-	getWorker := func() (Worker, error) {
+	getWorker := func() (Worker, <-chan struct{}, error) {
 		info := runner.workers[id]
 		if info == nil {
 			// No entry for the id means the worker
 			// will never become available.
-			return nil, errors.NotFoundf("worker %q", id)
+			return nil, nil, errors.NotFoundf("worker %q", id)
 		}
-		return info.worker, nil
+		return info.worker, info.done, nil
 	}
-	if w, err := getWorker(); err != nil || w != nil {
+	if w, done, err := getWorker(); err != nil || w != nil {
 		// The worker is immediately available  (or we know it's
 		// not going to become available). No need
 		// to block waiting for it.
@@ -325,14 +318,15 @@ func (runner *Runner) Worker(id string, abort <-chan struct{}) (Worker, error) {
 		// our caller.
 		select {
 		case <-runner.tomb.Dying():
-			return nil, ErrDead
+			return nil, nil, ErrDead
 		default:
 		}
-		return w, err
+		return w, done, err
 	}
 	type workerResult struct {
-		w   Worker
-		err error
+		w    Worker
+		done <-chan struct{}
+		err  error
 	}
 	wc := make(chan workerResult, 1)
 	stopped := make(chan struct{})
@@ -346,8 +340,8 @@ func (runner *Runner) Worker(id string, abort <-chan struct{}) (Worker, error) {
 				// Note: sync.Condition.Wait unlocks the mutex before
 				// waiting, then locks it again before returning.
 				runner.workersChangedCond.Wait()
-				if w, err := getWorker(); err != nil || w != nil {
-					wc <- workerResult{w, err}
+				if w, done, err := getWorker(); err != nil || w != nil {
+					wc <- workerResult{w, done, err}
 					return
 				}
 			}
@@ -362,13 +356,13 @@ func (runner *Runner) Worker(id string, abort <-chan struct{}) (Worker, error) {
 			// our caller.
 			select {
 			case <-runner.tomb.Dying():
-				return nil, ErrDead
+				return nil, nil, ErrDead
 			default:
 			}
 		}
-		return w.w, w.err
+		return w.w, w.done, w.err
 	case <-runner.tomb.Dying():
-		return nil, ErrDead
+		return nil, nil, ErrDead
 	case <-abort:
 	}
 	// Stop our wait goroutine.
@@ -378,7 +372,7 @@ func (runner *Runner) Worker(id string, abort <-chan struct{}) (Worker, error) {
 	// goroutine.
 	close(stopped)
 	runner.workersChangedCond.Broadcast()
-	return nil, ErrAborted
+	return nil, nil, ErrAborted
 }
 
 func (runner *Runner) run() error {
