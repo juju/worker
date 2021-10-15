@@ -268,10 +268,12 @@ func (runner *Runner) StopAndRemoveWorker(id string, abort <-chan struct{}) erro
 
 	select {
 	case <-abort:
+		return ErrAborted
 	case <-workerInfo.done:
 		return workerErr
+	case <-runner.tomb.Dying():
 	}
-	return ErrAborted
+	return ErrDead
 }
 
 // Wait implements Worker.Wait
