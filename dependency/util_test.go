@@ -52,6 +52,7 @@ func (fix *engineFixture) defaultEngineConfig(clock clock.Clock) dependency.Engi
 		MaxDelay:         time.Second,
 		BackoffResetTime: time.Minute,
 		Clock:            clock,
+		Metrics:          dependency.DefaultMetrics(),
 		Logger:           loggo.GetLogger("test"),
 	}
 }
