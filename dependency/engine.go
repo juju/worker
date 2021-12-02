@@ -79,6 +79,11 @@ type EngineConfig struct {
 	// Clock will be a wall clock for production, and test clocks for tests.
 	Clock Clock
 
+	// Metrics defines a type for reporting the workers lifecycle in the engine.
+	// Currently this only supports recording of the number of starts for a
+	// given worker, but could be expanded to record other measurements.
+	Metrics Metrics
+
 	// Logger is used to provide an implementation for where the logging
 	// messages go for the runner.
 	Logger Logger
@@ -110,6 +115,9 @@ func (config *EngineConfig) Validate() error {
 	if config.Clock == nil {
 		return errors.NotValidf("missing Clock")
 	}
+	if config.Metrics == nil {
+		return errors.NotValidf("missing Metrics")
+	}
 	if config.Logger == nil {
 		return errors.NotValidf("missing Logger")
 	}
@@ -136,6 +144,8 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		started: make(chan startedTicket),
 		stopped: make(chan stoppedTicket),
 		report:  make(chan reportTicket),
+
+		metrics: config.Metrics,
 	}
 	engine.tomb.Go(engine.loop)
 	return engine, nil
@@ -175,6 +185,10 @@ type Engine struct {
 	started chan startedTicket
 	stopped chan stoppedTicket
 	report  chan reportTicket
+
+	// Metrics is used to record the number of changes a given worker has
+	// performed.
+	metrics Metrics
 }
 
 // loop serializes manifold install operations and worker start/stop notifications.
@@ -563,6 +577,9 @@ func (engine *Engine) gotStarted(name string, worker worker.Worker, resourceLog 
 		info.startedTime = engine.config.Clock.Now().UTC()
 		engine.config.Logger.Debugf("%q manifold worker started at %v", name, info.startedTime)
 		engine.current[name] = info
+
+		// Record the start of a worker.
+		engine.metrics.RecordStart(name)
 
 		// Any manifold that declares this one as an input needs to be restarted.
 		engine.bounceDependents(name)
