@@ -223,9 +223,9 @@ func (catacomb *Catacomb) Kill(err error) {
 	if err == tomb.ErrDying {
 		err = errors.New("bad catacomb Kill: tomb.ErrDying")
 	}
-	cause := errors.Cause(err)
-	if match, ok := cause.(dyingError); ok {
-		if catacomb != match.catacomb {
+	var dyingErr dyingError
+	if errors.As(err, &dyingErr) {
+		if catacomb != dyingErr.catacomb {
 			err = errors.Errorf("bad catacomb Kill: other catacomb's ErrDying")
 		} else {
 			err = tomb.ErrDying

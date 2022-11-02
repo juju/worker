@@ -1,11 +1,11 @@
 module github.com/juju/worker/v3
 
-go 1.17
+go 1.19
 
 require (
 	github.com/juju/clock v0.0.0-20220203021603-d9deb868a28a
 	github.com/juju/collections v0.0.0-20220203020748-febd7cad8a7a
-	github.com/juju/errors v0.0.0-20220203013757-bd733f3c86b9
+	github.com/juju/errors v1.0.0
 	github.com/juju/loggo v0.0.0-20210728185423-eebad3a902c4
 	github.com/juju/testing v0.0.0-20220203020004-a0ff61f03494
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c

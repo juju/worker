@@ -491,7 +491,9 @@ func (engine *Engine) context(name string, inputs []string, abort <-chan struct{
 	}
 }
 
-var errAborted = errors.New("aborted before delay elapsed")
+const (
+	errAborted = errors.ConstError("aborted before delay elapsed")
+)
 
 // runWorker starts the supplied manifold's worker and communicates it back to the
 // loop goroutine; waits for worker completion; and communicates any error encountered
@@ -520,10 +522,10 @@ func (engine *Engine) runWorker(name string, delay time.Duration, start StartFun
 
 	startWorkerAndWait := func() error {
 		worker, err := startAfterDelay()
-		switch errors.Cause(err) {
-		case errAborted:
+		switch {
+		case errors.Is(err, errAborted):
 			return errAborted
-		case nil:
+		case err == nil:
 			engine.config.Logger.Tracef("running %q manifold worker", name)
 		default:
 			return err
@@ -596,18 +598,18 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 	// Copy current info and check for reasons to stop the engine.
 	info := engine.current[name]
 
-	switch errors.Cause(err) {
-	case nil:
+	switch {
+	case err == nil:
 		engine.config.Logger.Debugf("%q manifold worker completed successfully", name)
 		info.recentErrors = 0
-	case errAborted:
+	case errors.Is(err, errAborted):
 		// The start attempt was aborted, so we haven't really started.
 		engine.config.Logger.Tracef("%q manifold worker bounced while starting", name)
 		// If we have been aborted while trying to start, we are more likely
 		// to be able to start, so reset the start attempts.
 		info.startAttempts = 0
 		info.recentErrors = 1
-	case ErrMissing:
+	case errors.Is(err, ErrMissing):
 		engine.config.Logger.Tracef("%q manifold worker failed to start: %v", name, err)
 		// missing a dependency does (not?) trigger exponential backoff
 		info.recentErrors = 1
@@ -661,19 +663,19 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 		engine.requestStart(name, engine.config.BounceDelay)
 	} else {
 		// If we didn't stop it ourselves, we need to interpret the error.
-		switch errors.Cause(err) {
-		case nil, errAborted:
+		switch {
+		case err == nil, errors.Is(err, errAborted):
 			// Nothing went wrong; the task completed successfully. Nothing
 			// needs to be done (unless the inputs change, in which case it
 			// gets to check again).
-		case ErrMissing:
+		case errors.Is(err, ErrMissing):
 			// The task can't even start with the current state. Nothing more
 			// can be done (until the inputs change, in which case we retry
 			// anyway).
-		case ErrBounce:
+		case errors.Is(err, ErrBounce):
 			// The task exited but wanted to restart immediately.
 			engine.requestStart(name, engine.config.BounceDelay)
-		case ErrUninstall:
+		case errors.Is(err, ErrUninstall):
 			// The task should never run again, and can be removed completely.
 			engine.uninstall(name)
 		default:

@@ -111,23 +111,6 @@ type Context interface {
 // not be called again until its declared inputs change.
 type StartFunc func(context Context) (worker.Worker, error)
 
-// ErrMissing can be returned by a StartFunc or a worker to indicate to
-// the engine that it can't be usefully restarted until at least one of its
-// dependencies changes. There's no way to specify *which* dependency you need,
-// because that's a lot of implementation hassle for little practical gain.
-var ErrMissing = errors.New("dependency not available")
-
-// ErrBounce can be returned by a StartFunc or a worker to indicate to
-// the engine that it should be restarted immediately, instead of
-// waiting for ErrorDelay. This is useful for workers which restart
-// themselves to alert dependents that an output has changed.
-var ErrBounce = errors.New("restart immediately")
-
-// ErrUninstall can be returned by a StartFunc or a worker to indicate to the
-// engine that it can/should never run again, and that the originating manifold
-// should be completely removed.
-var ErrUninstall = errors.New("resource permanently unavailable")
-
 // FilterFunc is an error conversion function for errors returned from workers
 // or StartFuncs.
 type FilterFunc func(error) error
@@ -145,3 +128,22 @@ type IsFatalFunc func(err error) bool
 // WorstErrorFunc is used to rank fatal errors, to allow an Engine to return the
 // single most important error it's encountered.
 type WorstErrorFunc func(err0, err1 error) error
+
+const (
+	// ErrBounce can be returned by a StartFunc or a worker to indicate to
+	// the engine that it should be restarted immediately, instead of
+	// waiting for ErrorDelay. This is useful for workers which restart
+	// themselves to alert dependents that an output has changed.
+	ErrBounce = errors.ConstError("restart immediately")
+
+	// ErrMissing can be returned by a StartFunc or a worker to indicate to
+	// the engine that it can't be usefully restarted until at least one of its
+	// dependencies changes. There's no way to specify *which* dependency you need,
+	// because that's a lot of implementation hassle for little practical gain.
+	ErrMissing = errors.ConstError("dependency not available")
+
+	// ErrUninstall can be returned by a StartFunc or a worker to indicate to the
+	// engine that it can/should never run again, and that the originating manifold
+	// should be completely removed.
+	ErrUninstall = errors.ConstError("resource permanently unavailable")
+)

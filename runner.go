@@ -13,13 +13,13 @@ import (
 	"gopkg.in/tomb.v2"
 )
 
-// DefaultRestartDelay holds the default length of time that a worker
-// will wait between exiting and being restarted by a Runner.
-const DefaultRestartDelay = 3 * time.Second
+const (
+	// DefaultRestartDelay holds the default length of time that a worker
+	// will wait between exiting and being restarted by a Runner.
+	DefaultRestartDelay = 3 * time.Second
 
-var (
-	ErrAborted = errors.New("aborted waiting for worker")
-	ErrDead    = errors.New("worker runner is not running")
+	ErrAborted = errors.ConstError("aborted waiting for worker")
+	ErrDead    = errors.ConstError("worker runner is not running")
 )
 
 // Runner runs a set of workers, restarting them as necessary
