@@ -190,7 +190,7 @@ func (*RunnerSuite) TestStopAndWaitWorkerWithAbort(c *gc.C) {
 	close(stop)
 	select {
 	case err := <-errc:
-		c.Assert(errors.Cause(err), gc.Equals, worker.ErrAborted)
+		c.Assert(errors.Is(err, worker.ErrAborted), jc.IsTrue)
 	case <-time.After(longWait):
 		c.Fatalf("timed out waiting for worker")
 	}
@@ -562,7 +562,7 @@ func (*RunnerSuite) TestWorkerWithAbort(c *gc.C) {
 	close(stop)
 	select {
 	case err := <-errc:
-		c.Assert(errors.Cause(err), gc.Equals, worker.ErrAborted)
+		c.Assert(errors.Is(err, worker.ErrAborted), jc.IsTrue)
 	case <-time.After(longWait):
 		c.Fatalf("timed out waiting for worker")
 	}
@@ -651,7 +651,7 @@ func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 	runner.Kill()
 	select {
 	case err := <-errc:
-		c.Assert(errors.Cause(err), gc.Equals, worker.ErrDead)
+		c.Assert(errors.Is(err, worker.ErrDead), jc.IsTrue)
 	case <-time.After(longWait):
 		c.Fatalf("timed out waiting for worker")
 	}

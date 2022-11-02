@@ -245,7 +245,7 @@ func (s *CatacombSuite) TestAddWhenDyingReturnsWorkerError(c *gc.C) {
 		s.fix.catacomb.Kill(nil)
 
 		actual := s.fix.catacomb.Add(w)
-		c.Assert(errors.Cause(actual), gc.Equals, expect)
+		c.Assert(errors.Is(actual, expect), jc.IsTrue)
 		w.assertDead(c)
 	})
 	c.Check(err, jc.ErrorIsNil)
@@ -267,7 +267,7 @@ func (s *CatacombSuite) TestAddWhenDeadReturnsWorkerError(c *gc.C) {
 	expect := errors.New("squelch")
 	w := s.fix.startErrorWorker(c, expect)
 	actual := s.fix.catacomb.Add(w)
-	c.Assert(errors.Cause(actual), gc.Equals, expect)
+	c.Assert(errors.Is(actual, expect), jc.IsTrue)
 	w.assertDead(c)
 }
 
@@ -394,8 +394,7 @@ func (s *CatacombSuite) TestStressAddKillRaces(c *gc.C) {
 				// the important thing is that it already exists so we can hit
 				// Add() as soon as possible, just like the Kill() below.
 				if err := s.fix.catacomb.Add(w); err != nil {
-					cause := errors.Cause(err)
-					c.Check(cause, gc.Equals, errFailed)
+					c.Check(errors.Is(err, errFailed), jc.IsTrue)
 				}
 			})
 			together(func() {
@@ -407,8 +406,7 @@ func (s *CatacombSuite) TestStressAddKillRaces(c *gc.C) {
 		close(block)
 		wg.Wait()
 	})
-	cause := errors.Cause(err)
-	c.Check(cause, gc.Equals, errFailed)
+	c.Check(errors.Is(err, errFailed), jc.IsTrue)
 }
 
 func (s *CatacombSuite) TestReusedCatacomb(c *gc.C) {

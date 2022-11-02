@@ -168,7 +168,7 @@ func (s *EngineSuite) TestStartGetUndeclaredName(c *gc.C) {
 		err = engine.Install("other-task", dependency.Manifold{
 			Start: func(context dependency.Context) (worker.Worker, error) {
 				err := context.Get("some-task", nil)
-				c.Check(errors.Cause(err), gc.Equals, dependency.ErrMissing)
+				c.Check(errors.Is(err, dependency.ErrMissing), jc.IsTrue)
 				c.Check(err, gc.ErrorMatches, `"some-task" not declared: dependency not available`)
 				close(done)
 				// Return a real worker so we don't keep restarting and potentially double-closing.
@@ -665,7 +665,7 @@ func (s *EngineSuite) TestWorstError(c *gc.C) {
 		mh2.InjectError(c, errors.New("pong"))
 
 		err = workertest.CheckKilled(c, engine)
-		c.Check(errors.Cause(err), gc.Equals, worstErr)
+		c.Check(errors.Is(err, worstErr), jc.IsTrue)
 		c.Check(callCount, gc.Equals, 2)
 	})
 }
