@@ -4,6 +4,7 @@
 package catacomb
 
 import (
+	"context"
 	"fmt"
 	"runtime/debug"
 	"strings"
@@ -211,12 +212,22 @@ func (catacomb *Catacomb) Err() error {
 	return catacomb.tomb.Err()
 }
 
+// Context returns a context that is a copy of the provided parent context with
+// a replaced Done channel that is closed when either the catacomb is dying or
+// the parent is cancelled.
+//
+// If parent is nil, it defaults to the empty background context.
+func (catacomb *Catacomb) Context(parent context.Context) context.Context {
+	return catacomb.tomb.Context(parent)
+}
+
 // Kill kills the Catacomb's internal tomb with the supplied error, or one
 // derived from it.
-//  * if it's caused by this catacomb's ErrDying, it passes on tomb.ErrDying.
-//  * if it's tomb.ErrDying, or caused by another catacomb's ErrDying, it passes
-//    on a new error complaining about the misuse.
-//  * all other errors are passed on unmodified.
+//   - if it's caused by this catacomb's ErrDying, it passes on tomb.ErrDying.
+//   - if it's tomb.ErrDying, or caused by another catacomb's ErrDying, it passes
+//     on a new error complaining about the misuse.
+//   - all other errors are passed on unmodified.
+//
 // It's always safe to call Kill, but errors passed to Kill after the catacomb
 // is dead will be ignored.
 func (catacomb *Catacomb) Kill(err error) {
