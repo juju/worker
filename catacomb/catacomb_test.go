@@ -4,6 +4,7 @@
 package catacomb_test
 
 import (
+	"context"
 	"sync"
 
 	"github.com/juju/errors"
@@ -480,4 +481,81 @@ func checkInvalid(c *gc.C, plan catacomb.Plan, match string) {
 	}
 	check(plan.Validate())
 	check(catacomb.Invoke(plan))
+}
+
+type CatacombContextSuite struct {
+	testing.IsolationSuite
+}
+
+var _ = gc.Suite(&CatacombContextSuite{})
+
+func (CatacombContextSuite) TestContextNoParent(c *gc.C) {
+	var site catacomb.Catacomb
+	err := catacomb.Invoke(catacomb.Plan{
+		Site: &site,
+		Work: func() error { return nil },
+	})
+	c.Check(err, jc.ErrorIsNil)
+
+	parent2, cancel2 := context.WithCancel(context.WithValue(context.Background(), "parent", "parent2"))
+	child2 := site.Context(parent2)
+
+	if site.Context(parent2) != child2 {
+		c.Fatalf("Context returned different context for same parent")
+	}
+	if child2.Value("parent") != "parent2" {
+		c.Fatalf("Child context didn't inherit its parent's properties")
+	}
+	select {
+	case <-child2.Done():
+		c.Fatalf("Tomb's child context was born dead")
+	default:
+	}
+
+	cancel2()
+
+	select {
+	case <-child2.Done():
+	default:
+		c.Fatalf("Tomb's child context didn't die after parent was canceled")
+	}
+
+	parent3 := context.WithValue(context.Background(), "parent", "parent3")
+	child3 := site.Context(parent3)
+
+	if child3.Value("parent") != "parent3" {
+		c.Fatalf("Child context didn't inherit its parent's properties")
+	}
+	select {
+	case <-child3.Done():
+		c.Fatalf("Tomb's child context was born dead")
+	default:
+	}
+
+	site.Kill(nil)
+
+	if site.Context(parent3) == child3 {
+		c.Fatalf("Tomb is dead and shouldn't be tracking children anymore")
+	}
+	select {
+	case <-child3.Done():
+	default:
+		c.Fatalf("Child context didn't die after tomb's death")
+	}
+
+	parent4 := context.WithValue(context.Background(), "parent", "parent4")
+	child4 := site.Context(parent4)
+
+	select {
+	case <-child4.Done():
+	default:
+		c.Fatalf("Child context should be born canceled")
+	}
+
+	childnil := site.Context(nil)
+	select {
+	case <-childnil.Done():
+	default:
+		c.Fatalf("Child context should be born canceled")
+	}
 }
