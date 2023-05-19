@@ -230,7 +230,7 @@ func (runner *Runner) StartWorker(id string, startFunc func() (Worker, error)) e
 		// the startc arm of the select, and that calls startWorker (which never blocks)
 		// and then immediately sends any error to the reply channel.
 		return <-reply
-	case <-runner.tomb.Dead():
+	case <-runner.tomb.Dying():
 	}
 	return ErrDead
 }

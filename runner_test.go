@@ -334,6 +334,22 @@ func (*RunnerSuite) TestErrorImportance(c *gc.C) {
 	c.Assert(err, gc.Equals, errorLevel(9))
 }
 
+func (*RunnerSuite) TestPreventWorkerStartOnDying(c *gc.C) {
+	runner := worker.NewRunner(worker.RunnerParams{
+		IsFatal:      noneFatal,
+		RestartDelay: time.Millisecond,
+	})
+	var attempt int64
+	// Kill the runner, but don't wait for it to dead state.
+	runner.Kill()
+	err := runner.StartWorker("id", func() (worker.Worker, error) {
+		atomic.AddInt64(&attempt, 1)
+		return nil, nil
+	})
+	c.Assert(err, gc.Equals, worker.ErrDead)
+	c.Assert(atomic.LoadInt64(&attempt), gc.Equals, int64(0))
+}
+
 func (*RunnerSuite) TestStartWorkerWhenDead(c *gc.C) {
 	runner := worker.NewRunner(worker.RunnerParams{
 		IsFatal:      allFatal,
@@ -923,8 +939,4 @@ func noneFatal(error) bool {
 
 func allFatal(error) bool {
 	return true
-}
-
-func noImportance(err0, err1 error) bool {
-	return false
 }
