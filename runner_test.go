@@ -346,7 +346,7 @@ func (*RunnerSuite) TestPreventWorkerStartOnDying(c *gc.C) {
 		atomic.AddInt64(&attempt, 1)
 		return nil, nil
 	})
-	c.Assert(err, gc.Equals, worker.ErrDead)
+	c.Assert(err, gc.Equals, worker.ErrDying)
 	c.Assert(atomic.LoadInt64(&attempt), gc.Equals, int64(0))
 }
 

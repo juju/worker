@@ -20,6 +20,7 @@ const (
 
 	ErrAborted = errors.ConstError("aborted waiting for worker")
 	ErrDead    = errors.ConstError("worker runner is not running")
+	ErrDying   = errors.ConstError("worker runner is dying")
 )
 
 // Runner runs a set of workers, restarting them as necessary
@@ -224,15 +225,31 @@ func (runner *Runner) StartWorker(id string, startFunc func() (Worker, error)) e
 	// immediately afterwards.
 	reply := make(chan error)
 	select {
-	case runner.startc <- startReq{id, startFunc, reply}:
-		// We're certain to get a reply because the startc channel is synchronous
-		// so if we succeed in sending on it, we know that the run goroutine has entered
-		// the startc arm of the select, and that calls startWorker (which never blocks)
-		// and then immediately sends any error to the reply channel.
+	case runner.startc <- startReq{
+		id:    id,
+		start: startFunc,
+		reply: reply,
+	}:
+		// We're certain to get a reply because the startc channel is
+		// synchronous so if we succeed in sending on it, we know that the run
+		// goroutine has entered the startc arm of the select, and that calls
+		// startWorker (which never blocks) and then immediately sends any error
+		// to the reply channel.
 		return <-reply
+	case <-runner.tomb.Dead():
+		return ErrDead
 	case <-runner.tomb.Dying():
+		// This handles the case when the runner is dying but is already dead.
+		// As select statements are chosen at random, we can't guarantee that
+		// the runner is dead when we enter the select, so we need to check
+		// again here.
+		select {
+		case <-runner.tomb.Dead():
+			return ErrDead
+		default:
+			return ErrDying
+		}
 	}
-	return ErrDead
 }
 
 // StopWorker stops the worker associated with the given id.
@@ -341,7 +358,7 @@ func (runner *Runner) workerInfo(id string, abort <-chan struct{}) (Worker, <-ch
 				// waiting, then locks it again before returning.
 				runner.workersChangedCond.Wait()
 				if w, done, err := getWorker(); err != nil || w != nil {
-					wc <- workerResult{w, done, err}
+					wc <- workerResult{w: w, done: done, err: err}
 					return
 				}
 			}
@@ -575,17 +592,20 @@ func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Wo
 			panic(err)
 		}
 		runner.params.Logger.Infof("%q called runtime.Goexit unexpectedly", id)
-		runner.donec <- doneInfo{id, errors.Errorf("runtime.Goexit called in running worker - probably inappropriate Assert")}
+		runner.donec <- doneInfo{
+			id:  id,
+			err: errors.Errorf("runtime.Goexit called in running worker - probably inappropriate Assert"),
+		}
 	}()
 	worker, err := start()
 	normal = true
 
 	if err == nil {
-		runner.startedc <- startInfo{id, worker}
+		runner.startedc <- startInfo{id: id, worker: worker}
 		err = worker.Wait()
 	}
 	runner.params.Logger.Infof("stopped %q, err: %v", id, err)
-	runner.donec <- doneInfo{id, err}
+	runner.donec <- doneInfo{id: id, err: err}
 }
 
 type reporter interface {
