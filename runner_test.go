@@ -306,6 +306,23 @@ func (*RunnerSuite) TestOneWorkerRestartDelay(c *gc.C) {
 	c.Assert(worker.Stop(runner), gc.IsNil)
 }
 
+func (*RunnerSuite) TestOneWorkerIsStoppable(c *gc.C) {
+	const delay = 100 * time.Millisecond
+	runner := worker.NewRunner(worker.RunnerParams{
+		IsFatal:      noneFatal,
+		IsStoppable:  func(err error) bool { return true },
+		RestartDelay: delay,
+	})
+	starter := newTestWorkerStarter()
+	err := runner.StartWorker("id", starter.start)
+	c.Assert(err, jc.ErrorIsNil)
+	starter.assertStarted(c, true)
+	starter.die <- fmt.Errorf("non-fatal error")
+	starter.assertStarted(c, false)
+	starter.assertNeverStarted(c, delay)
+	c.Assert(worker.Stop(runner), gc.IsNil)
+}
+
 type errorLevel int
 
 func (e errorLevel) Error() string {
@@ -923,8 +940,4 @@ func noneFatal(error) bool {
 
 func allFatal(error) bool {
 	return true
-}
-
-func noImportance(err0, err1 error) bool {
-	return false
 }

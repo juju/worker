@@ -138,14 +138,19 @@ type Clock interface {
 // RunnerParams holds the parameters for a NewRunner call.
 type RunnerParams struct {
 	// IsFatal is called when a worker exits. If it returns
-	// true, all the other workers
-	// will be stopped and the runner itself will finish.
+	// true, all the other workers will be stopped and the runner
+	// itself will finish.
 	//
 	// If IsFatal is nil, all errors will be treated as fatal.
 	IsFatal func(error) bool
 
-	// When the runner exits because one or more
-	// workers have returned a fatal error, only the most important one,
+	// IsStoppable is called when a worker exits. If it returns
+	// true, the worker will be removed from the runner. All other
+	// workers will continue to run.
+	IsStoppable func(error) bool
+
+	// When the runner exits because one or more workers have
+	// returned a fatal error, only the most important one,
 	// will be returned. MoreImportant should report whether
 	// err0 is more important than err1.
 	//
@@ -182,6 +187,11 @@ func NewRunner(p RunnerParams) *Runner {
 	if p.IsFatal == nil {
 		p.IsFatal = func(error) bool {
 			return true
+		}
+	}
+	if p.IsStoppable == nil {
+		p.IsStoppable = func(error) bool {
+			return false
 		}
 	}
 	if p.MoreImportant == nil {
@@ -465,6 +475,11 @@ func (runner *Runner) workerDone(info doneInfo) {
 				runner.isDying = true
 				runner.killAll()
 			}
+			return
+		}
+		if runner.params.IsStoppable(info.err) {
+			runner.params.Logger.Debugf("removing %q from known workers", info.id)
+			runner.removeWorker(info.id, workerInfo.done)
 			return
 		}
 		runner.params.Logger.Errorf("exited %q: %s", info.id, errStr)
