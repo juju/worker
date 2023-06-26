@@ -320,6 +320,9 @@ func (*RunnerSuite) TestOneWorkerIsStoppable(c *gc.C) {
 	starter.die <- fmt.Errorf("non-fatal error")
 	starter.assertStarted(c, false)
 	starter.assertNeverStarted(c, delay)
+	w, err := runner.Worker("id", nil)
+	c.Assert(err, jc.Satisfies, errors.IsNotFound)
+	c.Assert(w, gc.Equals, nil)
 	c.Assert(worker.Stop(runner), gc.IsNil)
 }
 
