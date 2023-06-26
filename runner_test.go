@@ -306,12 +306,12 @@ func (*RunnerSuite) TestOneWorkerRestartDelay(c *gc.C) {
 	c.Assert(worker.Stop(runner), gc.IsNil)
 }
 
-func (*RunnerSuite) TestOneWorkerIsStoppable(c *gc.C) {
+func (*RunnerSuite) TestOneWorkerShouldRestart(c *gc.C) {
 	const delay = 100 * time.Millisecond
 	runner := worker.NewRunner(worker.RunnerParams{
-		IsFatal:      noneFatal,
-		IsStoppable:  func(err error) bool { return true },
-		RestartDelay: delay,
+		IsFatal:       noneFatal,
+		ShouldRestart: func(err error) bool { return false },
+		RestartDelay:  delay,
 	})
 	starter := newTestWorkerStarter()
 	err := runner.StartWorker("id", starter.start)

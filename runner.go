@@ -144,10 +144,10 @@ type RunnerParams struct {
 	// If IsFatal is nil, all errors will be treated as fatal.
 	IsFatal func(error) bool
 
-	// IsStoppable is called when a worker exits. If it returns
-	// true, the worker will be removed from the runner. All other
+	// ShouldRestart is called when a worker exits. If it returns
+	// false, the worker will be removed from the runner. All other
 	// workers will continue to run.
-	IsStoppable func(error) bool
+	ShouldRestart func(error) bool
 
 	// When the runner exits because one or more workers have
 	// returned a fatal error, only the most important one,
@@ -189,9 +189,9 @@ func NewRunner(p RunnerParams) *Runner {
 			return true
 		}
 	}
-	if p.IsStoppable == nil {
-		p.IsStoppable = func(error) bool {
-			return false
+	if p.ShouldRestart == nil {
+		p.ShouldRestart = func(error) bool {
+			return true
 		}
 	}
 	if p.MoreImportant == nil {
@@ -477,7 +477,7 @@ func (runner *Runner) workerDone(info doneInfo) {
 			}
 			return
 		}
-		if runner.params.IsStoppable(info.err) {
+		if !runner.params.ShouldRestart(info.err) {
 			runner.params.Logger.Debugf("removing %q from known workers", info.id)
 			runner.removeWorker(info.id, workerInfo.done)
 			return
