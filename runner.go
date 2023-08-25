@@ -453,9 +453,11 @@ type panicError interface {
 // to start. It maintains the runner.finalError field and
 // restarts the worker if necessary.
 func (runner *Runner) workerDone(info doneInfo) {
+	params := runner.params
+
 	workerInfo := runner.workers[info.id]
 	if !workerInfo.stopping && info.err == nil {
-		runner.params.Logger.Debugf("removing %q from known workers", info.id)
+		params.Logger.Debugf("removing %q from known workers", info.id)
 		runner.removeWorker(info.id, workerInfo.done)
 		return
 	}
@@ -465,9 +467,11 @@ func (runner *Runner) workerDone(info doneInfo) {
 			// Panics should always have the full stacktrace in the error log.
 			errStr = strings.Join(append([]string{errStr}, errWithStack.StackTrace()...), "\n")
 		}
-		if runner.params.IsFatal(info.err) {
-			runner.params.Logger.Errorf("fatal %q: %s", info.id, errStr)
-			if runner.finalError == nil || runner.params.MoreImportant(info.err, runner.finalError) {
+
+		params.Logger.Debugf("error %q: %s", info.id, errStr)
+		if params.IsFatal(info.err) {
+			params.Logger.Errorf("fatal error %q: %s", info.id, errStr)
+			if runner.finalError == nil || params.MoreImportant(info.err, runner.finalError) {
 				runner.finalError = info.err
 			}
 			runner.removeWorker(info.id, workerInfo.done)
@@ -476,16 +480,19 @@ func (runner *Runner) workerDone(info doneInfo) {
 				runner.killAll()
 			}
 			return
+		} else {
+			params.Logger.Infof("non-fatal error %q: %s", info.id, errStr)
 		}
-		if !runner.params.ShouldRestart(info.err) {
-			runner.params.Logger.Debugf("removing %q from known workers", info.id)
+
+		if !params.ShouldRestart(info.err) {
+			params.Logger.Debugf("removing %q from known workers", info.id)
 			runner.removeWorker(info.id, workerInfo.done)
 			return
 		}
-		runner.params.Logger.Errorf("exited %q: %s", info.id, errStr)
+		params.Logger.Errorf("exited %q: %s", info.id, errStr)
 	}
 	if workerInfo.start == nil {
-		runner.params.Logger.Debugf("no restart, removing %q from known workers", info.id)
+		params.Logger.Debugf("no restart, removing %q from known workers", info.id)
 
 		// The worker has been deliberately stopped;
 		// we can now remove it from the list of workers.
@@ -493,7 +500,7 @@ func (runner *Runner) workerDone(info doneInfo) {
 		return
 	}
 	go runner.runWorker(workerInfo.restartDelay, info.id, workerInfo.start)
-	workerInfo.restartDelay = runner.params.RestartDelay
+	workerInfo.restartDelay = params.RestartDelay
 }
 
 // removeWorker removes the worker with the given id from the
