@@ -4,6 +4,7 @@
 package dependency
 
 import (
+	stdcontext "context"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -82,6 +83,21 @@ func (ctx *context) rawAccess(resourceName string, out interface{}) error {
 	return convert(input, out)
 }
 
+// ScopedContext returns the context.Context that corresponds to
+// dependency.Context. If the dependency.Context is aborted then the
+// context.Context is canceled.
+func ScopedContext(context Context) stdcontext.Context {
+	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+	go func() {
+		select {
+		case <-context.Abort():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx
+}
+
 // resourceAccess describes a call made to (*context).Get.
 type resourceAccess struct {
 
@@ -93,25 +109,4 @@ type resourceAccess struct {
 
 	// err is any error returned from rawAccess.
 	err error
-}
-
-// report returns a convenient representation of ra.
-func (ra resourceAccess) report() map[string]interface{} {
-	report := map[string]interface{}{
-		KeyName: ra.name,
-		KeyType: ra.as,
-	}
-	if ra.err != nil {
-		report[KeyError] = ra.err.Error()
-	}
-	return report
-}
-
-// resourceLogReport returns a convenient representation of accessLog.
-func resourceLogReport(accessLog []resourceAccess) []map[string]interface{} {
-	result := make([]map[string]interface{}, len(accessLog))
-	for i, access := range accessLog {
-		result[i] = access.report()
-	}
-	return result
 }

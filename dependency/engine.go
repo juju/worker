@@ -18,10 +18,10 @@ import (
 
 // Logger represents the various logging methods used by the runner.
 type Logger interface {
-	Tracef(string, ...interface{})
-	Debugf(string, ...interface{})
-	Infof(string, ...interface{})
-	Errorf(string, ...interface{})
+	Tracef(string, ...any)
+	Debugf(string, ...any)
+	Infof(string, ...any)
+	Errorf(string, ...any)
 }
 
 // Clock defines the time methods needed for the engine.
@@ -245,10 +245,10 @@ func (engine *Engine) Wait() error {
 }
 
 // Report is part of the Reporter interface.
-func (engine *Engine) Report() map[string]interface{} {
-	report := make(chan map[string]interface{})
+func (engine *Engine) Report() map[string]any {
+	report := make(chan map[string]any)
 	select {
-	case engine.report <- reportTicket{report}:
+	case engine.report <- reportTicket{result: report}:
 		// This is safe so long as the loop sends a result.
 		return <-report
 	case <-engine.tomb.Dead():
@@ -256,7 +256,7 @@ func (engine *Engine) Report() map[string]interface{} {
 		// oneShotDying approach in loop means that it can continue to
 		// process requests until the last possible moment. Only once
 		// loop has exited do we fall back to this report.
-		report := map[string]interface{}{
+		report := map[string]any{
 			KeyState:     "stopped",
 			KeyManifolds: engine.manifoldsReport(),
 		}
@@ -269,7 +269,7 @@ func (engine *Engine) Report() map[string]interface{} {
 
 // liveReport collects and returns information about the engine, its manifolds,
 // and their workers. It must only be called from the loop goroutine.
-func (engine *Engine) liveReport() map[string]interface{} {
+func (engine *Engine) liveReport() map[string]any {
 	var reportError error
 	state := "started"
 	if engine.isDying() {
@@ -280,7 +280,7 @@ func (engine *Engine) liveReport() map[string]interface{} {
 			reportError = engine.worstError
 		}
 	}
-	report := map[string]interface{}{
+	report := map[string]any{
 		KeyState:     state,
 		KeyManifolds: engine.manifoldsReport(),
 	}
@@ -293,10 +293,10 @@ func (engine *Engine) liveReport() map[string]interface{} {
 // manifoldsReport collects and returns information about the engine's manifolds
 // and their workers. Until the tomb is Dead, it should only be called from the
 // loop goroutine; after that, it's goroutine-safe.
-func (engine *Engine) manifoldsReport() map[string]interface{} {
-	manifolds := map[string]interface{}{}
+func (engine *Engine) manifoldsReport() map[string]any {
+	manifolds := map[string]any{}
 	for name, info := range engine.current {
-		report := map[string]interface{}{
+		report := map[string]any{
 			KeyState:  info.state(),
 			KeyInputs: engine.manifolds[name].Inputs,
 		}
@@ -830,5 +830,5 @@ type stoppedTicket struct {
 // reportTicket is used by the engine to notify the loop that a status report
 // should be generated.
 type reportTicket struct {
-	result chan map[string]interface{}
+	result chan map[string]any
 }
