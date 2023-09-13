@@ -37,7 +37,6 @@ type Clock interface {
 
 // EngineConfig defines the parameters needed to create a new engine.
 type EngineConfig struct {
-
 	// IsFatal returns true when passed an error that should stop
 	// the engine. It must not be nil.
 	IsFatal IsFatalFunc
@@ -155,7 +154,6 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 // Engine maintains workers corresponding to its installed manifolds, and
 // restarts them whenever their inputs change.
 type Engine struct {
-
 	// config contains values passed in as config when the engine was created.
 	config EngineConfig
 
@@ -398,15 +396,13 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 		return
 	}
 
-	// Create a context for the worker, this will allow the cancelation of the
-	// worker if the engine is shutting down.
-	// TODO (stickupkid): Allow passing in a context factory into the engine
-	// config, which will then allow us to spawn workers with a context that
-	// can be canceled.
-	ctx, cancel := context.WithCancel(context.TODO())
-
 	// ...then update the info, copy it back to the engine, and start a worker
 	// goroutine based on current known state.
+
+	// Create a context for the worker, this will allow the cancellation of the
+	// worker if the engine is shutting down.
+	ctx, cancel := engine.scopedContext()
+
 	info.starting = true
 	info.startAttempts++
 	info.err = nil
@@ -434,6 +430,13 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 	}
 
 	go engine.runWorker(name, delay, manifold.Start, snapshot)
+}
+
+// scopedContext returns a context that will be tied to the lifecycle of
+// the tomb.
+func (engine *Engine) scopedContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	return engine.tomb.Context(ctx), cancel
 }
 
 // snapshot returns a snapshot of the current worker state, restricted to those
