@@ -4,6 +4,7 @@
 package dependency
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"strings"
@@ -217,7 +218,7 @@ func (engine *Engine) loop() error {
 		case ticket := <-engine.started:
 			engine.gotStarted(ticket.name, ticket.worker, ticket.resourceLog)
 		case ticket := <-engine.stopped:
-			engine.gotStopped(ticket.name, ticket.error, ticket.resourceLog)
+			engine.gotStopped(ticket.name, ticket.err, ticket.resourceLog)
 		}
 		if engine.isDying() {
 			if engine.allOthersStopped() {
@@ -397,14 +398,21 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 		return
 	}
 
+	// Create a context for the worker, this will allow the cancelation of the
+	// worker if the engine is shutting down.
+	// TODO (stickupkid): Allow passing in a context factory into the engine
+	// config, which will then allow us to spawn workers with a context that
+	// can be canceled.
+	ctx, cancel := context.WithCancel(context.TODO())
+
 	// ...then update the info, copy it back to the engine, and start a worker
 	// goroutine based on current known state.
 	info.starting = true
 	info.startAttempts++
 	info.err = nil
-	info.abort = make(chan struct{})
+	info.cancel = cancel
 	engine.current[name] = info
-	context := engine.context(name, manifold.Inputs, info.abort)
+	snapshot := engine.snapshot(ctx, name, manifold.Inputs)
 
 	// Always fuzz the delay a bit to help randomise the order of workers starting,
 	// which should make bugs more obvious
@@ -425,14 +433,13 @@ func (engine *Engine) requestStart(name string, delay time.Duration) {
 		delay = time.Duration(float64(delay) * fuzz).Round(time.Millisecond)
 	}
 
-	go engine.runWorker(name, delay, manifold.Start, context)
+	go engine.runWorker(name, delay, manifold.Start, snapshot)
 }
 
-// context returns a context backed by a snapshot of current
-// worker state, restricted to those workers declared in inputs. It must only
-// be called from the loop goroutine; see inside for a detailed discussion of
-// why we took this approach.
-func (engine *Engine) context(name string, inputs []string, abort <-chan struct{}) *context {
+// snapshot returns a snapshot of the current worker state, restricted to those
+// workers declared in inputs. It must only be called from the loop goroutine;
+// see inside for a detailed discussion of why we took this approach.
+func (engine *Engine) snapshot(ctx context.Context, name string, inputs []string) *snapshot {
 	// We snapshot the resources available at invocation time, rather than adding an
 	// additional communicate-resource-request channel. The latter approach is not
 	// unreasonable... but is prone to inelegant scrambles when starting several
@@ -481,9 +488,10 @@ func (engine *Engine) context(name string, inputs []string, abort <-chan struct{
 		outputs[resourceName] = engine.manifolds[resourceName].Output
 		workers[resourceName] = engine.current[resourceName].worker
 	}
-	return &context{
+
+	return &snapshot{
 		clientName: name,
-		abort:      abort,
+		ctx:        ctx,
 		expired:    make(chan struct{}),
 		workers:    workers,
 		outputs:    outputs,
@@ -498,7 +506,7 @@ const (
 // runWorker starts the supplied manifold's worker and communicates it back to the
 // loop goroutine; waits for worker completion; and communicates any error encountered
 // back to the loop goroutine. It must not be run on the loop goroutine.
-func (engine *Engine) runWorker(name string, delay time.Duration, start StartFunc, context *context) {
+func (engine *Engine) runWorker(name string, delay time.Duration, start StartFunc, snapshot *snapshot) {
 
 	startAfterDelay := func() (worker.Worker, error) {
 		// NOTE: the context will expire *after* the worker is started.
@@ -507,17 +515,17 @@ func (engine *Engine) runWorker(name string, delay time.Duration, start StartFun
 		//  2) failing to block them won't cause data races anyway
 		//  3) it's not worth complicating the interface for every client just
 		//     to eliminate the possibility of one harmlessly dumb interaction.
-		defer context.expire()
+		defer snapshot.expire()
 		engine.config.Logger.Tracef("starting %q manifold worker in %s...", name, delay)
 		select {
 		case <-engine.tomb.Dying():
 			return nil, errAborted
-		case <-context.Abort():
+		case <-snapshot.ctx.Done():
 			return nil, errAborted
 		case <-engine.config.Clock.After(delay):
 		}
 		engine.config.Logger.Tracef("starting %q manifold worker", name)
-		return start(context)
+		return start(snapshot.ctx, snapshot)
 	}
 
 	startWorkerAndWait := func() error {
@@ -536,7 +544,11 @@ func (engine *Engine) runWorker(name string, delay time.Duration, start StartFun
 			// Doesn't matter whether worker == engine: if we're already Dying
 			// then cleanly Kill()ing ourselves again won't hurt anything.
 			worker.Kill()
-		case engine.started <- startedTicket{name, worker, context.accessLog}:
+		case engine.started <- startedTicket{
+			name:        name,
+			worker:      worker,
+			resourceLog: snapshot.accessLog,
+		}:
 			engine.config.Logger.Tracef("registered %q manifold worker", name)
 		}
 		if worker == engine {
@@ -552,7 +564,11 @@ func (engine *Engine) runWorker(name string, delay time.Duration, start StartFun
 	}
 
 	// We may or may not send on started, but we *must* send on stopped.
-	engine.stopped <- stoppedTicket{name, startWorkerAndWait(), context.accessLog}
+	engine.stopped <- stoppedTicket{
+		name:        name,
+		err:         startWorkerAndWait(),
+		resourceLog: snapshot.accessLog,
+	}
 }
 
 // gotStarted updates the engine to reflect the creation of a worker. It must
@@ -716,9 +732,9 @@ func (engine *Engine) requestStop(name string) {
 
 	// Update info, kill worker if present, and copy info back to engine.
 	info.stopping = true
-	if info.abort != nil {
-		close(info.abort)
-		info.abort = nil
+	if info.cancel != nil {
+		info.cancel()
+		info.cancel = nil
 	}
 	if info.worker != nil {
 		info.worker.Kill()
@@ -768,7 +784,7 @@ func (engine *Engine) bounceDependents(name string) {
 type workerInfo struct {
 	starting    bool
 	stopping    bool
-	abort       chan struct{}
+	cancel      func()
 	worker      worker.Worker
 	err         error
 	resourceLog []resourceAccess
@@ -823,7 +839,7 @@ type startedTicket struct {
 // failure to create) the worker for a particular manifold.
 type stoppedTicket struct {
 	name        string
-	error       error
+	err         error
 	resourceLog []resourceAccess
 }
 

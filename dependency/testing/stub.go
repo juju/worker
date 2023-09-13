@@ -51,7 +51,7 @@ func NewStubResources(raw map[string]interface{}) StubResources {
 type StubResources map[string]StubResource
 
 // Context returns a dependency.Context that never aborts, backed by resources.
-func (resources StubResources) Context() dependency.Context {
+func (resources StubResources) Context() dependency.Container {
 	return &Context{
 		resources: resources,
 	}

@@ -4,6 +4,7 @@
 package dependency_test
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/juju/testing"
@@ -36,7 +37,7 @@ func (s *SelfSuite) TestInputs(c *gc.C) {
 func (s *SelfSuite) TestStart(c *gc.C) {
 	s.fix.run(c, func(engine *dependency.Engine) {
 		manifold := dependency.SelfManifold(engine)
-		actual, err := manifold.Start(nil)
+		actual, err := manifold.Start(context.Background(), nil)
 		c.Check(err, jc.ErrorIsNil)
 		c.Check(actual, gc.Equals, engine)
 	})

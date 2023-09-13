@@ -4,6 +4,8 @@
 package dependency
 
 import (
+	"context"
+
 	"github.com/juju/errors"
 
 	"github.com/juju/worker/v3"
@@ -81,17 +83,10 @@ type Manifold struct {
 // Manifolds conveniently represents several Manifolds.
 type Manifolds map[string]Manifold
 
-// Context represents the situation in which a StartFunc is running. A Context should
-// not be used outside its StartFunc; attempts to do so will have undefined results.
-type Context interface {
-
-	// Abort will be closed if the containing engine no longer wants to
-	// start the manifold's worker. You can ignore Abort if your worker
-	// will start quickly -- it'll just be shut down immediately, nbd --
-	// but if you need to mess with channels or long-running operations
-	// in your StartFunc, Abort lets you do so safely.
-	Abort() <-chan struct{}
-
+// Container represents the situation in which a StartFunc is running.
+// A Container should not be used outside its StartFunc; attempts to do so
+// will have undefined results.
+type Container interface {
 	// Get returns an indication of whether a named dependency can be
 	// satisfied. In particular:
 	//
@@ -109,7 +104,7 @@ type Context interface {
 // be taken from the supplied GetResourceFunc; if no worker can be started due
 // to unmet dependencies, it should return ErrMissing, in which case it will
 // not be called again until its declared inputs change.
-type StartFunc func(context Context) (worker.Worker, error)
+type StartFunc func(context.Context, Container) (worker.Worker, error)
 
 // FilterFunc is an error conversion function for errors returned from workers
 // or StartFuncs.

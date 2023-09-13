@@ -4,6 +4,8 @@
 package dependency
 
 import (
+	"context"
+
 	"github.com/juju/errors"
 
 	"github.com/juju/worker/v3"
@@ -82,7 +84,7 @@ func (v validator) visit(node string) error {
 // may have surprising effects.
 func SelfManifold(engine *Engine) Manifold {
 	return Manifold{
-		Start: func(_ Context) (worker.Worker, error) {
+		Start: func(_ context.Context, _ Container) (worker.Worker, error) {
 			return engine, nil
 		},
 		Output: func(in worker.Worker, out interface{}) error {
