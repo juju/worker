@@ -6,7 +6,7 @@ package workertest
 import (
 	"errors"
 
-	"github.com/juju/worker/v3"
+	"github.com/juju/worker/v4"
 )
 
 type NotAWatcher struct {

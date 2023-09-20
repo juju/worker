@@ -13,8 +13,8 @@ import (
 	gc "gopkg.in/check.v1"
 	"gopkg.in/tomb.v2"
 
-	"github.com/juju/worker/v3"
-	"github.com/juju/worker/v3/catacomb"
+	"github.com/juju/worker/v4"
+	"github.com/juju/worker/v4/catacomb"
 )
 
 type CatacombSuite struct {
