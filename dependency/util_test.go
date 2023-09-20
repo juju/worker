@@ -125,7 +125,7 @@ func (mh *manifoldHarness) Manifold() dependency.Manifold {
 	}
 }
 
-func (mh *manifoldHarness) start(ctx context.Context, container dependency.Container) (worker.Worker, error) {
+func (mh *manifoldHarness) start(ctx context.Context, container dependency.Getter) (worker.Worker, error) {
 	mh.startAttempts <- struct{}{}
 	if mh.startError != nil {
 		return nil, mh.startError
@@ -221,7 +221,7 @@ func (w *minimalWorker) Report() map[string]interface{} {
 	}
 }
 
-func startMinimalWorker(_ dependency.Container) (worker.Worker, error) {
+func startMinimalWorker(_ dependency.Getter) (worker.Worker, error) {
 	w := &minimalWorker{}
 	w.tomb.Go(func() error {
 		<-w.tomb.Dying()

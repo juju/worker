@@ -510,7 +510,6 @@ const (
 // loop goroutine; waits for worker completion; and communicates any error encountered
 // back to the loop goroutine. It must not be run on the loop goroutine.
 func (engine *Engine) runWorker(name string, delay time.Duration, start StartFunc, snapshot *snapshot) {
-
 	startAfterDelay := func() (worker.Worker, error) {
 		// NOTE: the context will expire *after* the worker is started.
 		// This is tolerable because

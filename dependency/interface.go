@@ -83,10 +83,11 @@ type Manifold struct {
 // Manifolds conveniently represents several Manifolds.
 type Manifolds map[string]Manifold
 
-// Container represents the situation in which a StartFunc is running.
-// A Container should not be used outside its StartFunc; attempts to do so
+// Getter represents a way to request named dependencies from within a
+// StartFunc.
+// A Getter should not be used outside its StartFunc; attempts to do so
 // will have undefined results.
-type Container interface {
+type Getter interface {
 	// Get returns an indication of whether a named dependency can be
 	// satisfied. In particular:
 	//
@@ -104,7 +105,7 @@ type Container interface {
 // be taken from the supplied GetResourceFunc; if no worker can be started due
 // to unmet dependencies, it should return ErrMissing, in which case it will
 // not be called again until its declared inputs change.
-type StartFunc func(context.Context, Container) (worker.Worker, error)
+type StartFunc func(context.Context, Getter) (worker.Worker, error)
 
 // FilterFunc is an error conversion function for errors returned from workers
 // or StartFuncs.

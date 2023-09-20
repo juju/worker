@@ -167,7 +167,7 @@ func (s *EngineSuite) TestStartGetUndeclaredName(c *gc.C) {
 		// Install another task with an undeclared dependency on the started task.
 		done := make(chan struct{})
 		err = engine.Install("other-task", dependency.Manifold{
-			Start: func(ctx context.Context, container dependency.Container) (worker.Worker, error) {
+			Start: func(ctx context.Context, container dependency.Getter) (worker.Worker, error) {
 				err := container.Get("some-task", nil)
 				c.Check(errors.Is(err, dependency.ErrMissing), jc.IsTrue)
 				c.Check(err, gc.ErrorMatches, `"some-task" not declared: dependency not available`)
@@ -209,7 +209,7 @@ func (s *EngineSuite) testStartGet(c *gc.C, outErr error) {
 		done := make(chan struct{})
 		err = engine.Install("other-task", dependency.Manifold{
 			Inputs: []string{"some-task"},
-			Start: func(ctx context.Context, container dependency.Container) (worker.Worker, error) {
+			Start: func(ctx context.Context, container dependency.Getter) (worker.Worker, error) {
 				err := container.Get("some-task", &target)
 				// Check the result from some-task's Output func matches what we expect.
 				c.Check(err, gc.Equals, outErr)
@@ -241,7 +241,7 @@ func (s *EngineSuite) TestStartAbortOnEngineKill(c *gc.C) {
 	s.fix.run(c, func(engine *dependency.Engine) {
 		starts := make(chan struct{}, 1000)
 		manifold := dependency.Manifold{
-			Start: func(ctx context.Context, container dependency.Container) (worker.Worker, error) {
+			Start: func(ctx context.Context, container dependency.Getter) (worker.Worker, error) {
 				starts <- struct{}{}
 				select {
 				case <-ctx.Done():
@@ -274,7 +274,7 @@ func (s *EngineSuite) TestStartAbortOnDependencyChange(c *gc.C) {
 		starts := make(chan struct{}, 1000)
 		manifold := dependency.Manifold{
 			Inputs: []string{"parent"},
-			Start: func(ctx context.Context, container dependency.Container) (worker.Worker, error) {
+			Start: func(ctx context.Context, container dependency.Getter) (worker.Worker, error) {
 				starts <- struct{}{}
 				select {
 				case <-ctx.Done():
@@ -496,7 +496,7 @@ func (s *EngineSuite) TestErrMissing(c *gc.C) {
 		// Start a dependent that always complains ErrMissing.
 		mh2 := newManifoldHarness("some-task")
 		manifold := mh2.Manifold()
-		manifold.Start = func(_ context.Context, _ dependency.Container) (worker.Worker, error) {
+		manifold.Start = func(_ context.Context, _ dependency.Getter) (worker.Worker, error) {
 			mh2.starts <- struct{}{}
 			return nil, errors.Trace(dependency.ErrMissing)
 		}
@@ -595,7 +595,7 @@ func (s *EngineSuite) TestFilterStartError(c *gc.C) {
 		filterErr := errors.New("mew hiss")
 
 		err := engine.Install("task", dependency.Manifold{
-			Start: func(_ context.Context, _ dependency.Container) (worker.Worker, error) {
+			Start: func(_ context.Context, _ dependency.Getter) (worker.Worker, error) {
 				return nil, startErr
 			},
 			Filter: func(in error) error {
