@@ -4,6 +4,7 @@
 package dependency_test
 
 import (
+	"context"
 	"time"
 
 	"github.com/juju/clock"
@@ -13,9 +14,9 @@ import (
 	gc "gopkg.in/check.v1"
 	"gopkg.in/tomb.v2"
 
-	"github.com/juju/worker/v3"
-	"github.com/juju/worker/v3/dependency"
-	"github.com/juju/worker/v3/workertest"
+	"github.com/juju/worker/v4"
+	"github.com/juju/worker/v4/dependency"
+	"github.com/juju/worker/v4/workertest"
 )
 
 type engineFixture struct {
@@ -124,13 +125,13 @@ func (mh *manifoldHarness) Manifold() dependency.Manifold {
 	}
 }
 
-func (mh *manifoldHarness) start(context dependency.Context) (worker.Worker, error) {
+func (mh *manifoldHarness) start(ctx context.Context, container dependency.Getter) (worker.Worker, error) {
 	mh.startAttempts <- struct{}{}
 	if mh.startError != nil {
 		return nil, mh.startError
 	}
 	for _, resourceName := range mh.inputs {
-		if err := context.Get(resourceName, nil); err != nil {
+		if err := container.Get(resourceName, nil); err != nil {
 			if mh.requireResources {
 				return nil, err
 			}
@@ -220,7 +221,7 @@ func (w *minimalWorker) Report() map[string]interface{} {
 	}
 }
 
-func startMinimalWorker(_ dependency.Context) (worker.Worker, error) {
+func startMinimalWorker(_ dependency.Getter) (worker.Worker, error) {
 	w := &minimalWorker{}
 	w.tomb.Go(func() error {
 		<-w.tomb.Dying()

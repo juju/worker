@@ -4,14 +4,15 @@
 package dependency_test
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/juju/testing"
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
 
-	"github.com/juju/worker/v3/dependency"
-	"github.com/juju/worker/v3/workertest"
+	"github.com/juju/worker/v4/dependency"
+	"github.com/juju/worker/v4/workertest"
 )
 
 type SelfSuite struct {
@@ -36,7 +37,7 @@ func (s *SelfSuite) TestInputs(c *gc.C) {
 func (s *SelfSuite) TestStart(c *gc.C) {
 	s.fix.run(c, func(engine *dependency.Engine) {
 		manifold := dependency.SelfManifold(engine)
-		actual, err := manifold.Start(nil)
+		actual, err := manifold.Start(context.Background(), nil)
 		c.Check(err, jc.ErrorIsNil)
 		c.Check(actual, gc.Equals, engine)
 	})

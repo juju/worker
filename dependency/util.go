@@ -4,9 +4,11 @@
 package dependency
 
 import (
+	"context"
+
 	"github.com/juju/errors"
 
-	"github.com/juju/worker/v3"
+	"github.com/juju/worker/v4"
 )
 
 // Installer exposes an Engine's Install method.
@@ -82,7 +84,7 @@ func (v validator) visit(node string) error {
 // may have surprising effects.
 func SelfManifold(engine *Engine) Manifold {
 	return Manifold{
-		Start: func(_ Context) (worker.Worker, error) {
+		Start: func(_ context.Context, _ Getter) (worker.Worker, error) {
 			return engine, nil
 		},
 		Output: func(in worker.Worker, out interface{}) error {

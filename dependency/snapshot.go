@@ -4,23 +4,24 @@
 package dependency
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/juju/errors"
 
-	"github.com/juju/worker/v3"
+	"github.com/juju/worker/v4"
 )
 
-// context encapsulates a snapshot of workers and output funcs and implements Context.
-type context struct {
+// snapshot encapsulates a snapshot of workers and output funcs and implements
+// Container.
+type snapshot struct {
+	// ctx represents the context in which the snapshot was taken.
+	ctx context.Context
 
 	// clientName is the name of the manifold for whose convenience this exists.
 	clientName string
 
-	// abort is closed when the worker being started is no longer required.
-	abort <-chan struct{}
-
-	// expired is closed when the context should no longer be used.
+	// expired is closed when the scope should no longer be used.
 	expired chan struct{}
 
 	// workers holds the snapshot of manifold workers.
@@ -33,23 +34,19 @@ type context struct {
 	// encountered. It does not include requests made after expiry.
 	accessLog []resourceAccess
 
+	// logger is used to pass the logger to the workers.
 	logger Logger
 }
 
-// Abort is part of the Context interface.
-func (ctx *context) Abort() <-chan struct{} {
-	return ctx.abort
-}
-
 // Get is part of the Context interface.
-func (ctx *context) Get(resourceName string, out interface{}) error {
-	ctx.logger.Tracef("%q manifold requested %q resource", ctx.clientName, resourceName)
+func (s *snapshot) Get(resourceName string, out interface{}) error {
+	s.logger.Tracef("%q manifold requested %q resource", s.clientName, resourceName)
 	select {
-	case <-ctx.expired:
+	case <-s.expired:
 		return errors.New("expired context: cannot be used outside Start func")
 	default:
-		err := ctx.rawAccess(resourceName, out)
-		ctx.accessLog = append(ctx.accessLog, resourceAccess{
+		err := s.rawAccess(resourceName, out)
+		s.accessLog = append(s.accessLog, resourceAccess{
 			name: resourceName,
 			as:   fmt.Sprintf("%T", out),
 			err:  err,
@@ -59,13 +56,13 @@ func (ctx *context) Get(resourceName string, out interface{}) error {
 }
 
 // expire closes the expired channel. Calling it more than once will panic.
-func (ctx *context) expire() {
-	close(ctx.expired)
+func (s *snapshot) expire() {
+	close(s.expired)
 }
 
 // rawAccess is a GetResourceFunc that neither checks enpiry nor records access.
-func (ctx *context) rawAccess(resourceName string, out interface{}) error {
-	input, found := ctx.workers[resourceName]
+func (s *snapshot) rawAccess(resourceName string, out interface{}) error {
+	input, found := s.workers[resourceName]
 	if !found {
 		return errors.Annotatef(ErrMissing, "%q not declared", resourceName)
 	} else if input == nil {
@@ -75,7 +72,7 @@ func (ctx *context) rawAccess(resourceName string, out interface{}) error {
 		// No conversion necessary, just an exist check.
 		return nil
 	}
-	convert := ctx.outputs[resourceName]
+	convert := s.outputs[resourceName]
 	if convert == nil {
 		return errors.Annotatef(ErrMissing, "%q not exposed", resourceName)
 	}
@@ -93,25 +90,4 @@ type resourceAccess struct {
 
 	// err is any error returned from rawAccess.
 	err error
-}
-
-// report returns a convenient representation of ra.
-func (ra resourceAccess) report() map[string]interface{} {
-	report := map[string]interface{}{
-		KeyName: ra.name,
-		KeyType: ra.as,
-	}
-	if ra.err != nil {
-		report[KeyError] = ra.err.Error()
-	}
-	return report
-}
-
-// resourceLogReport returns a convenient representation of accessLog.
-func resourceLogReport(accessLog []resourceAccess) []map[string]interface{} {
-	result := make([]map[string]interface{}, len(accessLog))
-	for i, access := range accessLog {
-		result[i] = access.report()
-	}
-	return result
 }

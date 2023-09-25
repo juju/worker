@@ -1,6 +1,6 @@
-module github.com/juju/worker/v3
+module github.com/juju/worker/v4
 
-go 1.19
+go 1.20
 
 require (
 	github.com/juju/clock v0.0.0-20220203021603-d9deb868a28a

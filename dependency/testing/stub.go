@@ -10,7 +10,7 @@ import (
 
 	"github.com/juju/errors"
 
-	"github.com/juju/worker/v3/dependency"
+	"github.com/juju/worker/v4/dependency"
 )
 
 // NewStubResource creates a single StubResource with the given
@@ -51,7 +51,7 @@ func NewStubResources(raw map[string]interface{}) StubResources {
 type StubResources map[string]StubResource
 
 // Context returns a dependency.Context that never aborts, backed by resources.
-func (resources StubResources) Context() dependency.Context {
+func (resources StubResources) Context() dependency.Getter {
 	return &Context{
 		resources: resources,
 	}

@@ -11,7 +11,7 @@ import (
 	jc "github.com/juju/testing/checkers"
 	gc "gopkg.in/check.v1"
 
-	"github.com/juju/worker/v3"
+	"github.com/juju/worker/v4"
 )
 
 var (
@@ -71,9 +71,9 @@ func CheckKill(c *gc.C, w worker.Worker) error {
 // CleanKill calls CheckKill with the supplied arguments, and Checks that the
 // returned error is nil. It's particularly suitable for deferring:
 //
-//     someWorker, err := some.NewWorker()
-//     c.Assert(err, jc.ErrorIsNil)
-//     defer workertest.CleanKill(c, someWorker)
+//	someWorker, err := some.NewWorker()
+//	c.Assert(err, jc.ErrorIsNil)
+//	defer workertest.CleanKill(c, someWorker)
 //
 // ...in the large number (majority?) of situations where a worker is expected
 // to run successfully; and it doesn't Assert, and is therefore suitable for use
@@ -86,9 +86,9 @@ func CleanKill(c *gc.C, w worker.Worker) {
 // DirtyKill calls CheckKill with the supplied arguments, and logs the returned
 // error. It's particularly suitable for deferring:
 //
-//     someWorker, err := some.NewWorker()
-//     c.Assert(err, jc.ErrorIsNil)
-//     defer workertest.DirtyKill(c, someWorker)
+//	someWorker, err := some.NewWorker()
+//	c.Assert(err, jc.ErrorIsNil)
+//	defer workertest.DirtyKill(c, someWorker)
 //
 // ...in the cases where we expect a worker to fail, but aren't specifically
 // testing that failure; and it doesn't Assert, and is therefore suitable for
@@ -104,9 +104,9 @@ func DirtyKill(c *gc.C, w worker.Worker) {
 // and tries to stop the (non-nil) worker via CleanKill(). It's suitable
 // for testing constructor failure:
 //
-//     someWorker, err := some.NewWorker(badConfig)
-//     workertest.CheckNilOrKill(c, someWorker)
-//     c.Check(err, ...
+//	someWorker, err := some.NewWorker(badConfig)
+//	workertest.CheckNilOrKill(c, someWorker)
+//	c.Check(err, ...
 //
 // ...because it will do the right thing if your constructor succeeds
 // unexpectedly, and make every effort to prevent a rogue worker living

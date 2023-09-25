@@ -14,7 +14,7 @@ import (
 	"github.com/juju/errors"
 	"gopkg.in/tomb.v2"
 
-	"github.com/juju/worker/v3"
+	"github.com/juju/worker/v4"
 )
 
 // Catacomb is a variant of tomb.Tomb with its own internal goroutine, designed
