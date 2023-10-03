@@ -303,6 +303,20 @@ func (runner *Runner) Worker(id string, abort <-chan struct{}) (Worker, error) {
 	return w, err
 }
 
+// WorkerNames returns the names of the current workers.
+// They are returned in no particular order and they might not exists when
+// the Worker request is made.
+func (runner *Runner) WorkerNames() []string {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+
+	names := make([]string, 0, len(runner.workers))
+	for name := range runner.workers {
+		names = append(names, name)
+	}
+	return names
+}
+
 func (runner *Runner) workerInfo(id string, abort <-chan struct{}) (Worker, <-chan struct{}, error) {
 	runner.mu.Lock()
 	// getWorker returns the current worker for the id

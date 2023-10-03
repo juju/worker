@@ -43,9 +43,11 @@ func (*RunnerSuite) TestOneWorkerStart(c *gc.C) {
 	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
+	c.Assert(runner.WorkerNames(), jc.SameContents, []string{"id"})
 
 	c.Assert(worker.Stop(runner), gc.IsNil)
 	starter.assertStarted(c, false)
+	c.Assert(runner.WorkerNames(), jc.SameContents, []string{})
 }
 
 func (*RunnerSuite) TestOneWorkerFinish(c *gc.C) {
@@ -63,6 +65,7 @@ func (*RunnerSuite) TestOneWorkerFinish(c *gc.C) {
 	starter.assertNeverStarted(c, time.Millisecond)
 
 	c.Assert(worker.Stop(runner), gc.IsNil)
+	c.Assert(runner.WorkerNames(), jc.SameContents, []string{})
 }
 
 func (*RunnerSuite) TestOneWorkerRestart(c *gc.C) {
@@ -361,6 +364,7 @@ func (*RunnerSuite) TestStartWorkerWhenDead(c *gc.C) {
 	})
 	c.Assert(worker.Stop(runner), gc.IsNil)
 	c.Assert(runner.StartWorker("foo", nil), gc.Equals, worker.ErrDead)
+	c.Assert(runner.WorkerNames(), jc.SameContents, []string{})
 }
 
 func (*RunnerSuite) TestStopWorkerWhenDead(c *gc.C) {
@@ -370,6 +374,7 @@ func (*RunnerSuite) TestStopWorkerWhenDead(c *gc.C) {
 	})
 	c.Assert(worker.Stop(runner), gc.IsNil)
 	c.Assert(runner.StopWorker("foo"), gc.Equals, worker.ErrDead)
+	c.Assert(runner.WorkerNames(), jc.SameContents, []string{})
 }
 
 func (*RunnerSuite) TestAllWorkersStoppedWhenOneDiesWithFatalError(c *gc.C) {
@@ -384,8 +389,9 @@ func (*RunnerSuite) TestAllWorkersStoppedWhenOneDiesWithFatalError(c *gc.C) {
 		c.Assert(err, jc.ErrorIsNil)
 		starters = append(starters, starter)
 	}
-	for _, starter := range starters {
+	for i, starter := range starters {
 		starter.assertStarted(c, true)
+		c.Assert(runner.WorkerNames(), Contains, fmt.Sprint(i))
 	}
 	dieErr := errors.New("fatal error")
 	starters[4].die <- dieErr
@@ -394,6 +400,7 @@ func (*RunnerSuite) TestAllWorkersStoppedWhenOneDiesWithFatalError(c *gc.C) {
 	for _, starter := range starters {
 		starter.assertStarted(c, false)
 	}
+	c.Assert(runner.WorkerNames(), jc.SameContents, []string{})
 }
 
 func (*RunnerSuite) TestFatalErrorWhileStarting(c *gc.C) {
@@ -489,6 +496,7 @@ func (*RunnerSuite) TestWorkerWithNoWorker(c *gc.C) {
 	w, err := runner.Worker("id", nil)
 	c.Assert(err, jc.Satisfies, errors.IsNotFound)
 	c.Assert(w, gc.Equals, nil)
+	c.Assert(runner.WorkerNames(), jc.SameContents, []string{})
 }
 
 func (*RunnerSuite) TestWorkerWithWorkerImmediatelyAvailable(c *gc.C) {
@@ -943,4 +951,33 @@ func noneFatal(error) bool {
 
 func allFatal(error) bool {
 	return true
+}
+
+// containsChecker checks that a slice of strings contains a given string.
+type containsChecker struct {
+	*gc.CheckerInfo
+}
+
+// Contains checks that a slice of strings contains a given string.
+var Contains gc.Checker = &containsChecker{
+	CheckerInfo: &gc.CheckerInfo{Name: "Contains", Params: []string{"obtained", "expected"}},
+}
+
+func (checker *containsChecker) Check(params []interface{}, names []string) (bool, string) {
+	expected, ok := params[1].(string)
+	if !ok {
+		return false, "expected must be a string"
+	}
+
+	obtained, isSlice := params[0].([]string)
+	if isSlice {
+		for _, s := range obtained {
+			if s == expected {
+				return true, ""
+			}
+		}
+		return false, ""
+	}
+
+	return false, "Obtained value is not a []string"
 }
