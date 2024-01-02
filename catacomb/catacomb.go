@@ -114,7 +114,11 @@ func Invoke(plan Plan) (err error) {
 	// This goroutine runs the work func and stops the catacomb with its error;
 	// and waits for for the listen goroutine and all added workers to complete
 	// before marking the catacomb's tomb Dead.
-	pprof.Do(catacomb.scopedContext(), pprof.Labels("catacomb-work", funcName(plan.Work)), func(ctx context.Context) {
+	labels := pprof.Labels(
+		"type", "catacomb",
+		"name", funcName(plan.Work),
+	)
+	pprof.Do(catacomb.scopedContext(), labels, func(ctx context.Context) {
 		catacomb.tomb.Go(func() error {
 			defer catacomb.wg.Wait()
 			catacomb.Kill(runSafely(plan.Work))
