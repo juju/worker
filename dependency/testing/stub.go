@@ -50,35 +50,29 @@ func NewStubResources(raw map[string]interface{}) StubResources {
 // StubResources defines the complete behaviour of a StubGetResource func.
 type StubResources map[string]StubResource
 
-// Context returns a dependency.Context that never aborts, backed by resources.
-func (resources StubResources) Context() dependency.Getter {
-	return &Context{
+// Getter returns a dependency.Getter that never aborts, backed by resources.
+func (resources StubResources) Getter() dependency.Getter {
+	return &Getter{
 		resources: resources,
 	}
 }
 
-// StubContext returns a Context backed by abort and resources derived from raw.
-func StubContext(abort <-chan struct{}, raw map[string]interface{}) *Context {
-	return &Context{
-		abort:     abort,
+// StubGetter returns a Getter.
+func StubGetter(raw map[string]interface{}) *Getter {
+	return &Getter{
 		resources: NewStubResources(raw),
 	}
 }
 
-// Context implements dependency.Context for convenient testing of dependency.StartFuncs.
-type Context struct {
-	abort     <-chan struct{}
+// Getter implements dependency.Getter for convenient testing of
+// dependency.StartFuncs.
+type Getter struct {
 	resources StubResources
 }
 
-// Abort is part of the dependency.Context interface.
-func (ctx *Context) Abort() <-chan struct{} {
-	return ctx.abort
-}
-
-// Get is part of the dependency.Context interface.
-func (ctx *Context) Get(name string, outPtr interface{}) error {
-	resource, found := ctx.resources[name]
+// Get is part of the dependency.Getter interface.
+func (g *Getter) Get(name string, outPtr interface{}) error {
+	resource, found := g.resources[name]
 	if !found {
 		return errors.Errorf("unexpected resource name: %s", name)
 	} else if resource.Error != nil {
