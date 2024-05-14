@@ -841,11 +841,9 @@ func (*RunnerSuite) TestWorkerWhenStartCallsGoexit(c *gc.C) {
 }
 
 func (*RunnerSuite) TestRunnerReport(c *gc.C) {
-	// Use a non UTC timezone to show times output in UTC.
-	// Vostok is +6 for the entire year.
-	loc, err := time.LoadLocation("Antarctica/Vostok")
-	c.Assert(err, jc.ErrorIsNil)
-	t0 := time.Date(2018, 8, 7, 19, 15, 42, 0, loc)
+	t0 := time.Now().UTC()
+	t0Format := t0.Format("2006-01-02 15:04:05")
+
 	started := make(chan worker.Worker)
 	clock := testclock.NewClock(t0)
 	runner := worker.NewRunnerWithNotify(c, worker.RunnerParams{
@@ -878,27 +876,27 @@ func (*RunnerSuite) TestRunnerReport(c *gc.C) {
 				"report": map[string]interface{}{
 					"index": 0},
 				"state":   "started",
-				"started": "2018-08-07 13:15:42",
+				"started": t0Format,
 			},
 			"worker-1": map[string]interface{}{
 				"state":   "started",
-				"started": "2018-08-07 13:15:42",
+				"started": t0Format,
 			},
 			"worker-2": map[string]interface{}{
 				"report": map[string]interface{}{
 					"index": 2},
 				"state":   "started",
-				"started": "2018-08-07 13:15:42",
+				"started": t0Format,
 			},
 			"worker-3": map[string]interface{}{
 				"state":   "started",
-				"started": "2018-08-07 13:15:42",
+				"started": t0Format,
 			},
 			"worker-4": map[string]interface{}{
 				"report": map[string]interface{}{
 					"index": 4},
 				"state":   "started",
-				"started": "2018-08-07 13:15:42",
+				"started": t0Format,
 			},
 		}})
 }
