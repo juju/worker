@@ -6,8 +6,6 @@ package catacomb
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
 	"strings"
@@ -37,6 +35,10 @@ type Catacomb struct {
 
 // Plan defines the strategy for an Invoke.
 type Plan struct {
+	// Name is a human-readable identifier for the work func. It should be
+	// used to identify the work that the catacomb is tasked with managing.
+	// This is used to annotate the pprof profile.
+	Name string
 
 	// Site must point to an unused Catacomb.
 	Site *Catacomb
@@ -52,6 +54,9 @@ type Plan struct {
 // reused catacombs: plan validity is necessary but not sufficient to determine
 // that an Invoke will succeed.
 func (plan Plan) Validate() error {
+	if plan.Name == "" {
+		return errors.NotValidf("empty Name")
+	}
 	if plan.Site == nil {
 		return errors.NotValidf("nil Site")
 	}
@@ -116,7 +121,7 @@ func Invoke(plan Plan) (err error) {
 	// before marking the catacomb's tomb Dead.
 	labels := pprof.Labels(
 		"type", "catacomb",
-		"name", funcName(plan.Work),
+		"name", plan.Name,
 	)
 	pprof.Do(catacomb.scopedContext(), labels, func(ctx context.Context) {
 		catacomb.tomb.Go(func() error {
@@ -318,12 +323,4 @@ func runSafely(f func() error) (err error) {
 		}
 	}()
 	return f()
-}
-
-func funcName(f func() error) string {
-	name := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-	if i := strings.LastIndex(name, "/"); i != -1 {
-		name = name[i+1:]
-	}
-	return name
 }

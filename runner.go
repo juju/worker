@@ -5,8 +5,6 @@ package worker
 
 import (
 	"context"
-	"reflect"
-	"runtime"
 	"runtime/pprof"
 	"strings"
 	"sync"
@@ -146,6 +144,11 @@ type Clock interface {
 
 // RunnerParams holds the parameters for a NewRunner call.
 type RunnerParams struct {
+	// Name is a human-readable identifier for the work func. It should be
+	// used to identify the work that the catacomb is tasked with managing.
+	// This is used to annotate the pprof profile.
+	Name string
+
 	// IsFatal is called when a worker exits. If it returns
 	// true, all the other workers will be stopped and the runner
 	// itself will finish.
@@ -182,6 +185,14 @@ type RunnerParams struct {
 	Logger Logger
 }
 
+// Validate checks that the RunnerParams are valid.
+func (p RunnerParams) Validate() error {
+	if p.Name == "" {
+		return errors.NotValidf("Name is required")
+	}
+	return nil
+}
+
 // NewRunner creates a new Runner.  When a worker finishes, if its error
 // is deemed fatal (determined by calling isFatal), all the other workers
 // will be stopped and the runner itself will finish.  Of all the fatal errors
@@ -192,7 +203,11 @@ type RunnerParams struct {
 // The function isFatal(err) returns whether err is a fatal error.  The
 // function moreImportant(err0, err1) returns whether err0 is considered
 // more important than err1.
-func NewRunner(p RunnerParams) *Runner {
+func NewRunner(p RunnerParams) (*Runner, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+
 	if p.IsFatal == nil {
 		p.IsFatal = func(error) bool {
 			return true
@@ -228,7 +243,7 @@ func NewRunner(p RunnerParams) *Runner {
 	}
 	runner.workersChangedCond.L = &runner.mu
 	runner.tomb.Go(runner.run)
-	return runner
+	return runner, nil
 }
 
 // StartWorker starts a worker running associated with the given id.
@@ -383,7 +398,7 @@ func (runner *Runner) workerInfo(id string, abort <-chan struct{}) (Worker, <-ch
 	}()
 	select {
 	case w := <-wc:
-		if errors.IsNotFound(w.err) {
+		if errors.Is(w.err, errors.NotFound) {
 			// If it wasn't found, it's possible that's because
 			// the whole thing has shut down, so
 			// check for dying so that we don't mislead
@@ -458,7 +473,7 @@ func (runner *Runner) startWorker(req startReq) error {
 
 	labels := pprof.Labels(
 		"type", "worker",
-		"name", workerFuncName(req.start),
+		"name", runner.params.Name,
 		// id is the worker id, which is unique for each worker, this is
 		// supplied by the caller of StartWorker.
 		"id", req.id,
@@ -685,20 +700,3 @@ type noopLogger struct{}
 func (noopLogger) Debugf(string, ...interface{}) {}
 func (noopLogger) Infof(string, ...interface{})  {}
 func (noopLogger) Errorf(string, ...interface{}) {}
-
-func workerFuncName(f func(context.Context) (Worker, error)) string {
-	name := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-	if name == "" {
-		return ""
-	}
-	parts := strings.Split(name, ".")
-
-	// Trim the package name and the function name to prevent it taking
-	// up too much space in the pprof output.
-	trim := 3
-	num := len(parts)
-	if num < trim {
-		return name
-	}
-	return strings.Join(parts[num-trim:], ".")
-}
