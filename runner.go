@@ -4,6 +4,8 @@
 package worker
 
 import (
+	"context"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,9 @@ const (
 	ErrAborted = errors.ConstError("aborted waiting for worker")
 	ErrDead    = errors.ConstError("worker runner is not running")
 )
+
+// StartFunc is the type alias of the function that creates a worker.
+type StartFunc = func(context.Context) (Worker, error)
 
 // Runner runs a set of workers, restarting them as necessary
 // when they fail.
@@ -73,11 +78,12 @@ type workerInfo struct {
 
 	// The following fields are maintained by the
 	// run goroutine.
+	labels pprof.LabelSet
 
 	// start holds the function to create the worker.
 	// If this is nil, the worker has been stopped
 	// and will be removed when its goroutine exits.
-	start func() (Worker, error)
+	start StartFunc
 
 	// restartDelay holds the length of time that runWorker
 	// will wait before calling the start function.
@@ -107,8 +113,9 @@ func (i *workerInfo) status() string {
 }
 
 type startReq struct {
+	ctx   context.Context
 	id    string
-	start func() (Worker, error)
+	start StartFunc
 	reply chan error
 }
 
@@ -137,6 +144,11 @@ type Clock interface {
 
 // RunnerParams holds the parameters for a NewRunner call.
 type RunnerParams struct {
+	// Name is a human-readable identifier for the work func. It should be
+	// used to identify the work that the catacomb is tasked with managing.
+	// This is used to annotate the pprof profile.
+	Name string
+
 	// IsFatal is called when a worker exits. If it returns
 	// true, all the other workers will be stopped and the runner
 	// itself will finish.
@@ -173,6 +185,14 @@ type RunnerParams struct {
 	Logger Logger
 }
 
+// Validate checks that the RunnerParams are valid.
+func (p RunnerParams) Validate() error {
+	if p.Name == "" {
+		return errors.NotValidf("Name is required")
+	}
+	return nil
+}
+
 // NewRunner creates a new Runner.  When a worker finishes, if its error
 // is deemed fatal (determined by calling isFatal), all the other workers
 // will be stopped and the runner itself will finish.  Of all the fatal errors
@@ -183,7 +203,11 @@ type RunnerParams struct {
 // The function isFatal(err) returns whether err is a fatal error.  The
 // function moreImportant(err0, err1) returns whether err0 is considered
 // more important than err1.
-func NewRunner(p RunnerParams) *Runner {
+func NewRunner(p RunnerParams) (*Runner, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+
 	if p.IsFatal == nil {
 		p.IsFatal = func(error) bool {
 			return true
@@ -219,7 +243,7 @@ func NewRunner(p RunnerParams) *Runner {
 	}
 	runner.workersChangedCond.L = &runner.mu
 	runner.tomb.Go(runner.run)
-	return runner
+	return runner, nil
 }
 
 // StartWorker starts a worker running associated with the given id.
@@ -227,19 +251,20 @@ func NewRunner(p RunnerParams) *Runner {
 // when the worker exits, an AlreadyExists error will be returned.
 //
 // StartWorker returns ErrDead if the runner is not running.
-func (runner *Runner) StartWorker(id string, startFunc func() (Worker, error)) error {
+func (runner *Runner) StartWorker(ctx context.Context, id string, startFunc StartFunc) error {
 	// Note: we need the reply channel so that when StartWorker
 	// returns, we're guaranteed that the worker is installed
 	// when we return, so Worker will see it if called
 	// immediately afterwards.
 	reply := make(chan error)
 	select {
-	case runner.startc <- startReq{id, startFunc, reply}:
+	case runner.startc <- startReq{ctx, id, startFunc, reply}:
 		// We're certain to get a reply because the startc channel is synchronous
 		// so if we succeed in sending on it, we know that the run goroutine has entered
 		// the startc arm of the select, and that calls startWorker (which never blocks)
 		// and then immediately sends any error to the reply channel.
 		return <-reply
+	case <-ctx.Done():
 	case <-runner.tomb.Dead():
 	}
 	return ErrDead
@@ -373,7 +398,7 @@ func (runner *Runner) workerInfo(id string, abort <-chan struct{}) (Worker, <-ch
 	}()
 	select {
 	case w := <-wc:
-		if errors.IsNotFound(w.err) {
+		if errors.Is(w.err, errors.NotFound) {
 			// If it wasn't found, it's possible that's because
 			// the whole thing has shut down, so
 			// check for dying so that we don't mislead
@@ -442,19 +467,32 @@ func (runner *Runner) startWorker(req startReq) error {
 		return nil
 	}
 	info := runner.workers[req.id]
-	if info == nil {
-		runner.mu.Lock()
-		defer runner.mu.Unlock()
-		runner.workers[req.id] = &workerInfo{
-			start:        req.start,
-			restartDelay: runner.params.RestartDelay,
-			started:      runner.params.Clock.Now().UTC(),
-			done:         make(chan struct{}, 1),
-		}
-		go runner.runWorker(0, req.id, req.start)
-		return nil
+	if info != nil {
+		return errors.AlreadyExistsf("worker %q", req.id)
 	}
-	return errors.AlreadyExistsf("worker %q", req.id)
+
+	labels := pprof.Labels(
+		"type", "worker",
+		"name", runner.params.Name,
+		// id is the worker id, which is unique for each worker, this is
+		// supplied by the caller of StartWorker.
+		"id", req.id,
+	)
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	runner.workers[req.id] = &workerInfo{
+		labels:       labels,
+		start:        req.start,
+		restartDelay: runner.params.RestartDelay,
+		started:      runner.params.Clock.Now().UTC(),
+		done:         make(chan struct{}, 1),
+	}
+
+	pprof.Do(runner.tomb.Context(req.ctx), labels, func(ctx context.Context) {
+		go runner.runWorker(ctx, 0, req.id, req.start)
+	})
+	return nil
 }
 
 type panicError interface {
@@ -513,7 +551,9 @@ func (runner *Runner) workerDone(info doneInfo) {
 		runner.removeWorker(info.id, workerInfo.done)
 		return
 	}
-	go runner.runWorker(workerInfo.restartDelay, info.id, workerInfo.start)
+	pprof.Do(runner.tomb.Context(context.Background()), workerInfo.labels, func(ctx context.Context) {
+		go runner.runWorker(ctx, workerInfo.restartDelay, info.id, workerInfo.start)
+	})
 	workerInfo.restartDelay = params.RestartDelay
 }
 
@@ -577,7 +617,7 @@ func (runner *Runner) killWorkerLocked(id string) {
 }
 
 // runWorker starts the given worker after waiting for the given delay.
-func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Worker, error)) {
+func (runner *Runner) runWorker(ctx context.Context, delay time.Duration, id string, start StartFunc) {
 	if delay > 0 {
 		runner.params.Logger.Infof("restarting %q in %v", id, delay)
 		// TODO(rog) provide a way of interrupting this
@@ -613,7 +653,7 @@ func (runner *Runner) runWorker(delay time.Duration, id string, start func() (Wo
 		runner.params.Logger.Infof("%q called runtime.Goexit unexpectedly", id)
 		runner.donec <- doneInfo{id, errors.Errorf("runtime.Goexit called in running worker - probably inappropriate Assert")}
 	}()
-	worker, err := start()
+	worker, err := start(ctx)
 	normal = true
 
 	if err == nil {

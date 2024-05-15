@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,10 @@ type Catacomb struct {
 
 // Plan defines the strategy for an Invoke.
 type Plan struct {
+	// Name is a human-readable identifier for the work func. It should be
+	// used to identify the work that the catacomb is tasked with managing.
+	// This is used to annotate the pprof profile.
+	Name string
 
 	// Site must point to an unused Catacomb.
 	Site *Catacomb
@@ -49,6 +54,9 @@ type Plan struct {
 // reused catacombs: plan validity is necessary but not sufficient to determine
 // that an Invoke will succeed.
 func (plan Plan) Validate() error {
+	if plan.Name == "" {
+		return errors.NotValidf("empty Name")
+	}
 	if plan.Site == nil {
 		return errors.NotValidf("nil Site")
 	}
@@ -71,7 +79,6 @@ func (plan Plan) Validate() error {
 // Invoke takes responsibility for all workers in plan.Init, *whether or not
 // it succeeds*.
 func Invoke(plan Plan) (err error) {
-
 	defer func() {
 		if err != nil {
 			stopWorkers(plan.Init)
@@ -112,10 +119,16 @@ func Invoke(plan Plan) (err error) {
 	// This goroutine runs the work func and stops the catacomb with its error;
 	// and waits for for the listen goroutine and all added workers to complete
 	// before marking the catacomb's tomb Dead.
-	catacomb.tomb.Go(func() error {
-		defer catacomb.wg.Wait()
-		catacomb.Kill(runSafely(plan.Work))
-		return nil
+	labels := pprof.Labels(
+		"type", "catacomb",
+		"name", plan.Name,
+	)
+	pprof.Do(catacomb.scopedContext(), labels, func(ctx context.Context) {
+		catacomb.tomb.Go(func() error {
+			defer catacomb.wg.Wait()
+			catacomb.Kill(runSafely(plan.Work))
+			return nil
+		})
 	})
 	return nil
 }
@@ -219,6 +232,12 @@ func (catacomb *Catacomb) Err() error {
 // If parent is nil, it defaults to the empty background context.
 func (catacomb *Catacomb) Context(parent context.Context) context.Context {
 	return catacomb.tomb.Context(parent)
+}
+
+// scopedContext returns a context that is associated with the catacomb's
+// tomb.Context, and will be cancelled when the tomb dies.
+func (catacomb *Catacomb) scopedContext() context.Context {
+	return catacomb.Context(context.Background())
 }
 
 // Kill kills the Catacomb's internal tomb with the supplied error, or one
