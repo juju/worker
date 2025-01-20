@@ -370,7 +370,7 @@ func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttempts(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:    "test",
 		IsFatal: noneFatal,
-		RestartDelay: func(attempts int, lastRestart time.Time, restartErr error) time.Duration {
+		RestartDelay: func(attempts int, restartErr error) time.Duration {
 			received.Add(int64(attempts))
 
 			go func(restartErr error) {
@@ -411,31 +411,22 @@ func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttempts(c *gc.C) {
 	}
 	c.Assert(worker.Stop(runner), gc.IsNil)
 
-	c.Check(received.Load(), gc.Equals, int64(1))
+	c.Check(received.Load(), gc.Equals, int64(0))
 }
 
-func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttemptsLastRestart(c *gc.C) {
+func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttemptsLargeDelayPeriod(c *gc.C) {
 	var received atomic.Int64
-
-	restarts := make(chan time.Time)
 
 	const delay = 100 * time.Millisecond
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:    "test",
 		IsFatal: noneFatal,
-		RestartDelay: func(attempts int, lastRestart time.Time, restartErr error) time.Duration {
+		RestartDelay: func(attempts int, restartErr error) time.Duration {
 			received.Add(int64(attempts))
-
-			go func(lastRestart time.Time) {
-				select {
-				case restarts <- lastRestart:
-				case <-time.After(shortWait):
-					c.Fatalf("timed out sending restart error")
-				}
-			}(lastRestart)
 
 			return delay
 		},
+		RestartDelayPeriod: delay * 2,
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -448,29 +439,61 @@ func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttemptsLastRestart(c *g
 	starter.die <- errors.New("fatal error")
 	starter.assertStarted(c, false)
 
-	select {
-	case restart := <-restarts:
-		// Initial restart time will be empty, as no restart has happened.
-		c.Check(restart, gc.Equals, time.Time{})
-	case <-time.After(shortWait):
-		c.Fatalf("timed out waiting for restart error ")
-	}
+	// First attempt should always be zero.
+	c.Check(received.Load(), gc.Equals, int64(0))
 
 	starter.assertStarted(c, true)
 	starter.die <- errors.New("fatal error")
 	starter.assertStarted(c, false)
 
-	select {
-	case restart := <-restarts:
-		c.Check(restart.IsZero(), jc.IsFalse)
-	case <-time.After(shortWait):
-		c.Fatalf("timed out waiting for restart error ")
-	}
+	starter.assertStarted(c, true)
+
+	c.Assert(worker.Stop(runner), gc.IsNil)
+
+	// Second attempt with a large delay period should not reset the attempt
+	// counter.
+	c.Check(received.Load(), gc.Equals, int64(1))
+}
+
+func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttemptsSmallDelayPeriod(c *gc.C) {
+	var received atomic.Int64
+
+	const delay = 100 * time.Millisecond
+	runner, err := worker.NewRunner(worker.RunnerParams{
+		Name:    "test",
+		IsFatal: noneFatal,
+		RestartDelay: func(attempts int, restartErr error) time.Duration {
+			received.Add(int64(attempts))
+
+			return delay
+		},
+		RestartDelayPeriod: delay / 2,
+	})
+	c.Assert(err, jc.ErrorIsNil)
+
+	starter := newTestWorkerStarter()
+
+	err = runner.StartWorker(context.Background(), "id", starter.start)
+	c.Assert(err, jc.ErrorIsNil)
+
+	starter.assertStarted(c, true)
+	starter.die <- errors.New("fatal error")
+	starter.assertStarted(c, false)
+
+	// First attempt should always be zero.
+	c.Check(received.Load(), gc.Equals, int64(0))
+
+	starter.assertStarted(c, true)
+	starter.die <- errors.New("fatal error")
+	starter.assertStarted(c, false)
 
 	starter.assertStarted(c, true)
 
 	c.Assert(worker.Stop(runner), gc.IsNil)
-	c.Check(received.Load(), gc.Equals, int64(3))
+
+	// Second attempt with a small delay period should reset the attempt
+	// counter.
+	c.Check(received.Load(), gc.Equals, int64(0))
 }
 
 func (*RunnerSuite) TestOneWorkerShouldNotRestart(c *gc.C) {
@@ -1193,7 +1216,7 @@ func (checker *containsChecker) Check(params []interface{}, names []string) (boo
 }
 
 func constDelay(d time.Duration) worker.DelayFunc {
-	return func(attempts int, lastRestartTime time.Time, lastError error) time.Duration {
+	return func(attempts int, lastError error) time.Duration {
 		return d
 	}
 }

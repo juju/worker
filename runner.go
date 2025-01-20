@@ -26,12 +26,12 @@ const (
 
 // DelayFunc is the type alias of the function that returns the delay between
 // worker restarts. It is called with the number of attempts that have been made
-// to start the worker, the time the worker was last restarted, and the error
-// that caused the worker to exit.
+// since the last window period. The lastErr argument is the error that caused
+// the worker to exit. Depending on the error, the delay can be adjusted.
 //
 // The worker id is not passed to the function because we shouldn't to prevent
 // the function from being able to make decisions based on the worker id.
-type DelayFunc = func(attempts int, lastRestartedTime time.Time, lastErr error) time.Duration
+type DelayFunc = func(attempts int, lastErr error) time.Duration
 
 // StartFunc is the type alias of the function that creates a worker.
 type StartFunc = func(context.Context) (Worker, error)
@@ -191,6 +191,10 @@ type RunnerParams struct {
 	// If this is nil, DefaultRestartDelay will be used.
 	RestartDelay DelayFunc
 
+	// RestartDelayPeriod is the length of time that the restart delay
+	// is calculated over.
+	RestartDelayPeriod time.Duration
+
 	// Clock is used for timekeeping. If it's nil, clock.WallClock
 	// will be used.
 	Clock Clock
@@ -239,9 +243,12 @@ func NewRunner(p RunnerParams) (*Runner, error) {
 		}
 	}
 	if p.RestartDelay == nil {
-		p.RestartDelay = func(attempts int, lastRestartedTime time.Time, lastErr error) time.Duration {
+		p.RestartDelay = func(attempts int, lastErr error) time.Duration {
 			return DefaultRestartDelay
 		}
+	}
+	if p.RestartDelayPeriod == 0 {
+		p.RestartDelayPeriod = 10 * time.Minute
 	}
 	if p.Clock == nil {
 		p.Clock = clock.WallClock
@@ -578,12 +585,20 @@ func (runner *Runner) workerDone(info doneInfo) {
 		return
 	}
 
-	// The worker has exited with a non-fatal error.
-	// We'll restart it after a delay, increment the attempts, so it's
-	// possible to track how many times the worker has been restarted.
-	delay := workerInfo.restartDelay(workerInfo.attempts, workerInfo.restarted, info.err)
-	workerInfo.attempts++
-	workerInfo.restarted = params.Clock.Now().UTC()
+	// The worker has exited with a non-fatal error. We'll restart it after a
+	// delay, increment the attempts, so it's possible to track how many times
+	// the worker has been restarted over the restart delay period.
+	now := params.Clock.Now().UTC()
+
+	// If the worker has been restarted after the restart delay period, reset
+	// the attempts counter. Otherwise, increment the attempts counter.
+	if now.After(workerInfo.restarted.Add(params.RestartDelayPeriod)) {
+		workerInfo.attempts = 0
+	} else {
+		workerInfo.attempts++
+	}
+	delay := workerInfo.restartDelay(workerInfo.attempts, info.err)
+	workerInfo.restarted = now
 
 	// Kick off the worker again taking into account the delay.
 	pprof.Do(runner.tomb.Context(context.Background()), workerInfo.labels, func(ctx context.Context) {
