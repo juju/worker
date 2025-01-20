@@ -49,7 +49,7 @@ func (*RunnerSuite) TestOneWorkerStart(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -68,7 +68,7 @@ func (*RunnerSuite) TestOneWorkerFinish(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -89,7 +89,7 @@ func (*RunnerSuite) TestOneWorkerRestart(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -113,7 +113,7 @@ func (*RunnerSuite) TestStopAndWaitWorker(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: 3 * time.Second,
+		RestartDelay: constDelay(3 * time.Second),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -152,7 +152,7 @@ func (*RunnerSuite) TestStopAndWaitWorkerReturnsWorkerError(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: 3 * time.Second,
+		RestartDelay: constDelay(3 * time.Second),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -191,7 +191,7 @@ func (*RunnerSuite) TestStopAndWaitWorkerWithAbort(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Second,
+		RestartDelay: constDelay(time.Second),
 		Clock:        clock,
 	})
 	c.Assert(err, jc.ErrorIsNil)
@@ -232,7 +232,7 @@ func (*RunnerSuite) TestOneWorkerStartFatalError(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -248,7 +248,7 @@ func (*RunnerSuite) TestOneWorkerDieFatalError(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -267,7 +267,7 @@ func (*RunnerSuite) TestOneWorkerStartStop(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -285,7 +285,7 @@ func (*RunnerSuite) TestOneWorkerStopFatalError(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -304,7 +304,7 @@ func (*RunnerSuite) TestWorkerStartWhenRunningOrStopping(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: 3 * time.Second,
+		RestartDelay: constDelay(3 * time.Second),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -337,16 +337,19 @@ func (*RunnerSuite) TestOneWorkerRestartDelay(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: delay,
+		RestartDelay: constDelay(delay),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
 	starter := newTestWorkerStarter()
 	err = runner.StartWorker(context.Background(), "id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
+
 	starter.assertStarted(c, true)
+
 	starter.die <- fmt.Errorf("non-fatal error")
 	starter.assertStarted(c, false)
+
 	t0 := time.Now()
 	starter.assertStarted(c, true)
 	restartDuration := time.Since(t0)
@@ -356,13 +359,150 @@ func (*RunnerSuite) TestOneWorkerRestartDelay(c *gc.C) {
 	c.Assert(worker.Stop(runner), gc.IsNil)
 }
 
-func (*RunnerSuite) TestOneWorkerShouldRestart(c *gc.C) {
+func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttempts(c *gc.C) {
+	var received atomic.Int64
+
+	var fatalErr = errors.New("fatal error")
+
+	errs := make(chan error)
+
+	const delay = 100 * time.Millisecond
+	runner, err := worker.NewRunner(worker.RunnerParams{
+		Name:    "test",
+		IsFatal: noneFatal,
+		RestartDelay: func(attempts int, restartErr error) time.Duration {
+			received.Add(int64(attempts))
+
+			go func(restartErr error) {
+				select {
+				case errs <- restartErr:
+				case <-time.After(shortWait):
+					c.Fatalf("timed out sending restart error")
+				}
+			}(restartErr)
+
+			return delay
+		},
+	})
+	c.Assert(err, jc.ErrorIsNil)
+
+	starter := newTestWorkerStarter()
+	err = runner.StartWorker(context.Background(), "id", starter.start)
+	c.Assert(err, jc.ErrorIsNil)
+
+	starter.assertStarted(c, true)
+
+	starter.die <- fatalErr
+	starter.assertStarted(c, false)
+
+	// Wait for the error to be received, from the restart delay function.
+	select {
+	case err := <-errs:
+		c.Check(err, gc.Equals, fatalErr)
+	case <-time.After(shortWait):
+		c.Fatalf("timed out waiting for restart error")
+	}
+
+	t0 := time.Now()
+	starter.assertStarted(c, true)
+	restartDuration := time.Since(t0)
+	if restartDuration < delay {
+		c.Fatalf("restart delay was not respected; got %v want %v", restartDuration, delay)
+	}
+	c.Assert(worker.Stop(runner), gc.IsNil)
+
+	c.Check(received.Load(), gc.Equals, int64(0))
+}
+
+func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttemptsLargeDelayPeriod(c *gc.C) {
+	var received atomic.Int64
+
+	const delay = 100 * time.Millisecond
+	runner, err := worker.NewRunner(worker.RunnerParams{
+		Name:    "test",
+		IsFatal: noneFatal,
+		RestartDelay: func(attempts int, restartErr error) time.Duration {
+			received.Add(int64(attempts))
+
+			return delay
+		},
+		RestartDelayPeriod: delay * 2,
+	})
+	c.Assert(err, jc.ErrorIsNil)
+
+	starter := newTestWorkerStarter()
+
+	err = runner.StartWorker(context.Background(), "id", starter.start)
+	c.Assert(err, jc.ErrorIsNil)
+
+	starter.assertStarted(c, true)
+	starter.die <- errors.New("fatal error")
+	starter.assertStarted(c, false)
+
+	// First attempt should always be zero.
+	c.Check(received.Load(), gc.Equals, int64(0))
+
+	starter.assertStarted(c, true)
+	starter.die <- errors.New("fatal error")
+	starter.assertStarted(c, false)
+
+	starter.assertStarted(c, true)
+
+	c.Assert(worker.Stop(runner), gc.IsNil)
+
+	// Second attempt with a large delay period should not reset the attempt
+	// counter.
+	c.Check(received.Load(), gc.Equals, int64(1))
+}
+
+func (*RunnerSuite) TestOneWorkerRestartDelayAfterFailedAttemptsSmallDelayPeriod(c *gc.C) {
+	var received atomic.Int64
+
+	const delay = 100 * time.Millisecond
+	runner, err := worker.NewRunner(worker.RunnerParams{
+		Name:    "test",
+		IsFatal: noneFatal,
+		RestartDelay: func(attempts int, restartErr error) time.Duration {
+			received.Add(int64(attempts))
+
+			return delay
+		},
+		RestartDelayPeriod: delay / 2,
+	})
+	c.Assert(err, jc.ErrorIsNil)
+
+	starter := newTestWorkerStarter()
+
+	err = runner.StartWorker(context.Background(), "id", starter.start)
+	c.Assert(err, jc.ErrorIsNil)
+
+	starter.assertStarted(c, true)
+	starter.die <- errors.New("fatal error")
+	starter.assertStarted(c, false)
+
+	// First attempt should always be zero.
+	c.Check(received.Load(), gc.Equals, int64(0))
+
+	starter.assertStarted(c, true)
+	starter.die <- errors.New("fatal error")
+	starter.assertStarted(c, false)
+
+	starter.assertStarted(c, true)
+
+	c.Assert(worker.Stop(runner), gc.IsNil)
+
+	// Second attempt with a small delay period should reset the attempt
+	// counter.
+	c.Check(received.Load(), gc.Equals, int64(0))
+}
+
+func (*RunnerSuite) TestOneWorkerShouldNotRestart(c *gc.C) {
 	const delay = 100 * time.Millisecond
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:          "test",
 		IsFatal:       noneFatal,
 		ShouldRestart: func(err error) bool { return false },
-		RestartDelay:  delay,
+		RestartDelay:  constDelay(delay),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -394,7 +534,7 @@ func (*RunnerSuite) TestErrorImportance(c *gc.C) {
 		Name:          "test",
 		IsFatal:       allFatal,
 		MoreImportant: moreImportant,
-		RestartDelay:  time.Millisecond,
+		RestartDelay:  constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -414,7 +554,7 @@ func (*RunnerSuite) TestStartWorkerWhenDead(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -427,7 +567,7 @@ func (*RunnerSuite) TestStopWorkerWhenDead(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -440,7 +580,7 @@ func (*RunnerSuite) TestAllWorkersStoppedWhenOneDiesWithFatalError(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -472,7 +612,7 @@ func (*RunnerSuite) TestFatalErrorWhileStarting(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -515,7 +655,7 @@ func (*RunnerSuite) TestFatalErrorWhileSelfStartWorker(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -558,7 +698,7 @@ func (*RunnerSuite) TestWorkerWithNoWorker(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -572,7 +712,7 @@ func (*RunnerSuite) TestWorkerWithWorkerImmediatelyAvailable(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -595,7 +735,7 @@ func (*RunnerSuite) TestWorkerWithWorkerNotImmediatelyAvailable(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      allFatal,
-		RestartDelay: time.Millisecond,
+		RestartDelay: constDelay(time.Millisecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -636,7 +776,7 @@ func (*RunnerSuite) TestWorkerWithAbort(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Second,
+		RestartDelay: constDelay(time.Second),
 		Clock:        clock,
 	})
 	c.Assert(err, jc.ErrorIsNil)
@@ -680,7 +820,7 @@ func (*RunnerSuite) TestWorkerConcurrent(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Microsecond,
+		RestartDelay: constDelay(time.Microsecond),
 	})
 	c.Assert(err, jc.ErrorIsNil)
 
@@ -739,7 +879,7 @@ func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Second,
+		RestartDelay: constDelay(time.Second),
 		Clock:        clock,
 	})
 	c.Assert(err, jc.ErrorIsNil)
@@ -778,7 +918,7 @@ func (*RunnerSuite) TestWorkerWhenWorkerRemovedWhileWaiting(c *gc.C) {
 	runner, err := worker.NewRunner(worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Second,
+		RestartDelay: constDelay(time.Second),
 		Clock:        clock,
 	})
 	c.Assert(err, jc.ErrorIsNil)
@@ -849,7 +989,7 @@ func (*RunnerSuite) TestRunnerReport(c *gc.C) {
 	runner := worker.NewRunnerWithNotify(c, worker.RunnerParams{
 		Name:         "test",
 		IsFatal:      noneFatal,
-		RestartDelay: time.Second,
+		RestartDelay: constDelay(time.Second),
 		Clock:        clock,
 	}, started)
 	defer worker.Stop(runner)
@@ -1073,4 +1213,10 @@ func (checker *containsChecker) Check(params []interface{}, names []string) (boo
 	}
 
 	return false, "Obtained value is not a []string"
+}
+
+func constDelay(d time.Duration) worker.DelayFunc {
+	return func(attempts int, lastError error) time.Duration {
+		return d
+	}
 }
