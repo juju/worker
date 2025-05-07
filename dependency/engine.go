@@ -214,9 +214,9 @@ func (engine *Engine) loop() error {
 			// This is safe so long as the Install method reads the result.
 			ticket.result <- engine.gotInstall(ticket.name, ticket.manifold)
 		case ticket := <-engine.started:
-			engine.gotStarted(ticket.name, ticket.worker, ticket.resourceLog)
+			engine.gotStarted(ticket.name, ticket.worker)
 		case ticket := <-engine.stopped:
-			engine.gotStopped(ticket.name, ticket.err, ticket.resourceLog)
+			engine.gotStopped(ticket.name, ticket.err)
 		}
 		if engine.isDying() {
 			if engine.allOthersStopped() {
@@ -547,9 +547,8 @@ func (engine *Engine) runWorker(name string, delay time.Duration, start StartFun
 			// then cleanly Kill()ing ourselves again won't hurt anything.
 			worker.Kill()
 		case engine.started <- startedTicket{
-			name:        name,
-			worker:      worker,
-			resourceLog: snapshot.accessLog,
+			name:   name,
+			worker: worker,
 		}:
 			engine.config.Logger.Tracef("registered %q manifold worker", name)
 		}
@@ -567,15 +566,14 @@ func (engine *Engine) runWorker(name string, delay time.Duration, start StartFun
 
 	// We may or may not send on started, but we *must* send on stopped.
 	engine.stopped <- stoppedTicket{
-		name:        name,
-		err:         startWorkerAndWait(),
-		resourceLog: snapshot.accessLog,
+		name: name,
+		err:  startWorkerAndWait(),
 	}
 }
 
 // gotStarted updates the engine to reflect the creation of a worker. It must
 // only be called from the loop goroutine.
-func (engine *Engine) gotStarted(name string, worker worker.Worker, resourceLog []resourceAccess) {
+func (engine *Engine) gotStarted(name string, worker worker.Worker) {
 	// Copy current info; check preconditions and abort the workers if we've
 	// already been asked to stop it.
 	info := engine.current[name]
@@ -593,7 +591,6 @@ func (engine *Engine) gotStarted(name string, worker worker.Worker, resourceLog 
 		info.startCount++
 		// Reset the start attempts after a successful start.
 		info.startAttempts = 0
-		info.resourceLog = resourceLog
 		info.startedTime = engine.config.Clock.Now().UTC()
 		engine.config.Logger.Debugf("%q manifold worker started at %v", name, info.startedTime)
 		engine.current[name] = info
@@ -612,7 +609,7 @@ type stackTracer interface {
 
 // gotStopped updates the engine to reflect the demise of (or failure to create)
 // a worker. It must only be called from the loop goroutine.
-func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceAccess) {
+func (engine *Engine) gotStopped(name string, err error) {
 	// Copy current info and check for reasons to stop the engine.
 	info := engine.current[name]
 
@@ -663,8 +660,7 @@ func (engine *Engine) gotStopped(name string, err error, resourceLog []resourceA
 
 	// Reset engine info; and bail out if we can be sure there's no need to bounce.
 	engine.current[name] = workerInfo{
-		err:         err,
-		resourceLog: resourceLog,
+		err: err,
 		// Keep the start count and start attempts but clear the start timestamps.
 		startAttempts: info.startAttempts,
 		startCount:    info.startCount,
@@ -784,12 +780,11 @@ func (engine *Engine) bounceDependents(name string) {
 // workerInfo stores what an engine's loop goroutine needs to know about the
 // worker for a given Manifold.
 type workerInfo struct {
-	starting    bool
-	stopping    bool
-	cancel      func()
-	worker      worker.Worker
-	err         error
-	resourceLog []resourceAccess
+	starting bool
+	stopping bool
+	cancel   func()
+	worker   worker.Worker
+	err      error
 
 	startedTime   time.Time
 	startCount    int
@@ -832,17 +827,15 @@ type installTicket struct {
 // startedTicket is used by engine to notify the loop of the creation of the
 // worker for a particular manifold.
 type startedTicket struct {
-	name        string
-	worker      worker.Worker
-	resourceLog []resourceAccess
+	name   string
+	worker worker.Worker
 }
 
 // stoppedTicket is used by engine to notify the loop of the demise of (or
 // failure to create) the worker for a particular manifold.
 type stoppedTicket struct {
-	name        string
-	err         error
-	resourceLog []resourceAccess
+	name string
+	err  error
 }
 
 // reportTicket is used by the engine to notify the loop that a status report
