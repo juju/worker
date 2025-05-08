@@ -6,10 +6,7 @@ package catacomb
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"runtime"
 	"runtime/debug"
-	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -74,6 +71,7 @@ func (plan Plan) Validate() error {
 // Invoke takes responsibility for all workers in plan.Init, *whether or not
 // it succeeds*.
 func Invoke(plan Plan) (err error) {
+
 	defer func() {
 		if err != nil {
 			stopWorkers(plan.Init)
@@ -114,12 +112,10 @@ func Invoke(plan Plan) (err error) {
 	// This goroutine runs the work func and stops the catacomb with its error;
 	// and waits for for the listen goroutine and all added workers to complete
 	// before marking the catacomb's tomb Dead.
-	pprof.Do(catacomb.scopedContext(), pprof.Labels("catacomb-work", funcName(plan.Work)), func(ctx context.Context) {
-		catacomb.tomb.Go(func() error {
-			defer catacomb.wg.Wait()
-			catacomb.Kill(runSafely(plan.Work))
-			return nil
-		})
+	catacomb.tomb.Go(func() error {
+		defer catacomb.wg.Wait()
+		catacomb.Kill(runSafely(plan.Work))
+		return nil
 	})
 	return nil
 }
@@ -225,12 +221,6 @@ func (catacomb *Catacomb) Context(parent context.Context) context.Context {
 	return catacomb.tomb.Context(parent)
 }
 
-// scopedContext returns a context that is associated with the catacomb's
-// tomb.Context, and will be cancelled when the tomb dies.
-func (catacomb *Catacomb) scopedContext() context.Context {
-	return catacomb.Context(context.Background())
-}
-
 // Kill kills the Catacomb's internal tomb with the supplied error, or one
 // derived from it.
 //   - if it's caused by this catacomb's ErrDying, it passes on tomb.ErrDying.
@@ -314,12 +304,4 @@ func runSafely(f func() error) (err error) {
 		}
 	}()
 	return f()
-}
-
-func funcName(f func() error) string {
-	name := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-	if i := strings.LastIndex(name, "/"); i != -1 {
-		name = name[i+1:]
-	}
-	return name
 }

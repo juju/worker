@@ -4,7 +4,6 @@
 package worker_test
 
 import (
-	"context"
 	"fmt"
 	"runtime"
 	"sync"
@@ -41,7 +40,7 @@ func (*RunnerSuite) TestOneWorkerStart(c *gc.C) {
 		RestartDelay: time.Millisecond,
 	})
 	starter := newTestWorkerStarter()
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 	c.Assert(runner.WorkerNames(), jc.SameContents, []string{"id"})
@@ -57,7 +56,7 @@ func (*RunnerSuite) TestOneWorkerFinish(c *gc.C) {
 		RestartDelay: time.Millisecond,
 	})
 	starter := newTestWorkerStarter()
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 
@@ -75,7 +74,7 @@ func (*RunnerSuite) TestOneWorkerRestart(c *gc.C) {
 		RestartDelay: time.Millisecond,
 	})
 	starter := newTestWorkerStarter()
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 
@@ -99,7 +98,7 @@ func (*RunnerSuite) TestStopAndWaitWorker(c *gc.C) {
 	starter.stopWait = make(chan struct{})
 
 	// Start a worker, and wait for it.
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 
@@ -136,7 +135,7 @@ func (*RunnerSuite) TestStopAndWaitWorkerReturnsWorkerError(c *gc.C) {
 	starter.killErr = errors.New("boom")
 
 	// Start a worker, and wait for it.
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 
@@ -171,7 +170,7 @@ func (*RunnerSuite) TestStopAndWaitWorkerWithAbort(c *gc.C) {
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
 	starter.startErr = errors.Errorf("test error")
-	runner.StartWorker(context.Background(), "id", starter.start)
+	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
 	select {
@@ -207,7 +206,7 @@ func (*RunnerSuite) TestOneWorkerStartFatalError(c *gc.C) {
 	})
 	starter := newTestWorkerStarter()
 	starter.startErr = errors.New("cannot start test task")
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	err = runner.Wait()
 	c.Assert(err, gc.Equals, starter.startErr)
@@ -219,7 +218,7 @@ func (*RunnerSuite) TestOneWorkerDieFatalError(c *gc.C) {
 		RestartDelay: time.Millisecond,
 	})
 	starter := newTestWorkerStarter()
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 	dieErr := errors.New("error when running")
@@ -235,7 +234,7 @@ func (*RunnerSuite) TestOneWorkerStartStop(c *gc.C) {
 		RestartDelay: time.Millisecond,
 	})
 	starter := newTestWorkerStarter()
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 	err = runner.StopWorker("id")
@@ -251,7 +250,7 @@ func (*RunnerSuite) TestOneWorkerStopFatalError(c *gc.C) {
 	})
 	starter := newTestWorkerStarter()
 	starter.stopErr = errors.New("stop error")
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 	err = runner.StopWorker("id")
@@ -269,11 +268,11 @@ func (*RunnerSuite) TestWorkerStartWhenRunningOrStopping(c *gc.C) {
 	starter.stopWait = make(chan struct{})
 
 	// Start a worker, and wait for it.
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 
-	err = runner.StartWorker(context.Background(), "id", starter.start)
+	err = runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.Satisfies, errors.IsAlreadyExists)
 
 	// XXX the above does not imply the *runner* knows it's started.
@@ -285,7 +284,7 @@ func (*RunnerSuite) TestWorkerStartWhenRunningOrStopping(c *gc.C) {
 	c.Assert(err, jc.ErrorIsNil)
 
 	// While it's still blocked, try to start another.
-	err = runner.StartWorker(context.Background(), "id", starter.start)
+	err = runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.Satisfies, errors.IsAlreadyExists)
 }
 
@@ -296,7 +295,7 @@ func (*RunnerSuite) TestOneWorkerRestartDelay(c *gc.C) {
 		RestartDelay: delay,
 	})
 	starter := newTestWorkerStarter()
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 	starter.die <- fmt.Errorf("non-fatal error")
@@ -318,7 +317,7 @@ func (*RunnerSuite) TestOneWorkerShouldRestart(c *gc.C) {
 		RestartDelay:  delay,
 	})
 	starter := newTestWorkerStarter()
-	err := runner.StartWorker(context.Background(), "id", starter.start)
+	err := runner.StartWorker("id", starter.start)
 	c.Assert(err, jc.ErrorIsNil)
 	starter.assertStarted(c, true)
 	starter.die <- fmt.Errorf("non-fatal error")
@@ -349,7 +348,7 @@ func (*RunnerSuite) TestErrorImportance(c *gc.C) {
 	for i := 0; i < 10; i++ {
 		starter := newTestWorkerStarter()
 		starter.stopErr = errorLevel(i)
-		err := runner.StartWorker(context.Background(), id(i), starter.start)
+		err := runner.StartWorker(id(i), starter.start)
 		c.Assert(err, jc.ErrorIsNil)
 	}
 	err := runner.StopWorker(id(4))
@@ -364,7 +363,7 @@ func (*RunnerSuite) TestStartWorkerWhenDead(c *gc.C) {
 		RestartDelay: time.Millisecond,
 	})
 	c.Assert(worker.Stop(runner), gc.IsNil)
-	c.Assert(runner.StartWorker(context.Background(), "foo", nil), gc.Equals, worker.ErrDead)
+	c.Assert(runner.StartWorker("foo", nil), gc.Equals, worker.ErrDead)
 	c.Assert(runner.WorkerNames(), jc.SameContents, []string{})
 }
 
@@ -386,7 +385,7 @@ func (*RunnerSuite) TestAllWorkersStoppedWhenOneDiesWithFatalError(c *gc.C) {
 	var starters []*testWorkerStarter
 	for i := 0; i < 10; i++ {
 		starter := newTestWorkerStarter()
-		err := runner.StartWorker(context.Background(), fmt.Sprint(i), starter.start)
+		err := runner.StartWorker(fmt.Sprint(i), starter.start)
 		c.Assert(err, jc.ErrorIsNil)
 		starters = append(starters, starter)
 	}
@@ -418,13 +417,13 @@ func (*RunnerSuite) TestFatalErrorWhileStarting(c *gc.C) {
 	// we can delay the start indefinitely.
 	slowStarter.startNotify = make(chan bool)
 
-	err := runner.StartWorker(context.Background(), "slow starter", slowStarter.start)
+	err := runner.StartWorker("slow starter", slowStarter.start)
 	c.Assert(err, jc.ErrorIsNil)
 
 	fatalStarter := newTestWorkerStarter()
 	fatalStarter.startErr = fmt.Errorf("a fatal error")
 
-	err = runner.StartWorker(context.Background(), "fatal worker", fatalStarter.start)
+	err = runner.StartWorker("fatal worker", fatalStarter.start)
 	c.Assert(err, jc.ErrorIsNil)
 
 	// Wait for the runner loop to react to the fatal
@@ -459,17 +458,17 @@ func (*RunnerSuite) TestFatalErrorWhileSelfStartWorker(c *gc.C) {
 	// we can delay the start indefinitely.
 	selfStarter.startNotify = make(chan bool)
 	selfStarter.hook = func() {
-		runner.StartWorker(context.Background(), "another", func(context.Context) (worker.Worker, error) {
+		runner.StartWorker("another", func() (worker.Worker, error) {
 			return nil, fmt.Errorf("no worker started")
 		})
 	}
-	err := runner.StartWorker(context.Background(), "self starter", selfStarter.start)
+	err := runner.StartWorker("self starter", selfStarter.start)
 	c.Assert(err, jc.ErrorIsNil)
 
 	fatalStarter := newTestWorkerStarter()
 	fatalStarter.startErr = fmt.Errorf("a fatal error")
 
-	err = runner.StartWorker(context.Background(), "fatal worker", fatalStarter.start)
+	err = runner.StartWorker("fatal worker", fatalStarter.start)
 	c.Assert(err, jc.ErrorIsNil)
 
 	// Wait for the runner loop to react to the fatal
@@ -506,7 +505,7 @@ func (*RunnerSuite) TestWorkerWithWorkerImmediatelyAvailable(c *gc.C) {
 		RestartDelay: time.Millisecond,
 	})
 	starter := newTestWorkerStarter()
-	runner.StartWorker(context.Background(), "id", starter.start)
+	runner.StartWorker("id", starter.start)
 
 	// Wait long enough to be reasonably confident that the
 	// worker has been started and registered.
@@ -528,10 +527,10 @@ func (*RunnerSuite) TestWorkerWithWorkerNotImmediatelyAvailable(c *gc.C) {
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
 	startCh := make(chan struct{})
-	runner.StartWorker(context.Background(), "id", func(ctx context.Context) (worker.Worker, error) {
+	runner.StartWorker("id", func() (worker.Worker, error) {
 		startCh <- struct{}{}
 		<-startCh
-		return starter.start(ctx)
+		return starter.start()
 	})
 	<-startCh
 	// The start function has been called but we know the
@@ -566,7 +565,7 @@ func (*RunnerSuite) TestWorkerWithAbort(c *gc.C) {
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
 	starter.startErr = errors.Errorf("test error")
-	runner.StartWorker(context.Background(), "id", starter.start)
+	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
 	select {
@@ -610,7 +609,7 @@ func (*RunnerSuite) TestWorkerConcurrent(c *gc.C) {
 			err: errors.Errorf("worker %d error", i),
 		}
 		workers[i] = w
-		err := runner.StartWorker(context.Background(), fmt.Sprint("id", i), func(context.Context) (worker.Worker, error) {
+		err := runner.StartWorker(fmt.Sprint("id", i), func() (worker.Worker, error) {
 			return w, nil
 		})
 		c.Assert(err, gc.Equals, nil)
@@ -662,7 +661,7 @@ func (*RunnerSuite) TestWorkerWhenRunnerKilledWhileWaiting(c *gc.C) {
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
 	starter.startErr = errors.Errorf("test error")
-	runner.StartWorker(context.Background(), "id", starter.start)
+	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
 	select {
@@ -697,7 +696,7 @@ func (*RunnerSuite) TestWorkerWhenWorkerRemovedWhileWaiting(c *gc.C) {
 	defer worker.Stop(runner)
 	starter := newTestWorkerStarter()
 	starter.startErr = errors.Errorf("test error")
-	runner.StartWorker(context.Background(), "id", starter.start)
+	runner.StartWorker("id", starter.start)
 
 	// Wait for the runner start waiting for the restart delay.
 	select {
@@ -740,7 +739,7 @@ func (*RunnerSuite) TestWorkerWhenStartCallsGoexit(c *gc.C) {
 	})
 	defer worker.Stop(runner)
 
-	runner.StartWorker(context.Background(), "id", func(context.Context) (worker.Worker, error) {
+	runner.StartWorker("id", func() (worker.Worker, error) {
 		runtime.Goexit()
 		panic("unreachable")
 	})
@@ -769,7 +768,7 @@ func (*RunnerSuite) TestRunnerReport(c *gc.C) {
 			report = map[string]interface{}{"index": i}
 		}
 		starter := newTestWorkerStarterWithReport(report)
-		runner.StartWorker(context.Background(), fmt.Sprintf("worker-%d", i), starter.start)
+		runner.StartWorker(fmt.Sprintf("worker-%d", i), starter.start)
 		select {
 		case <-started:
 		case <-time.After(5 * time.Second):
@@ -879,7 +878,7 @@ func (starter *testWorkerStarter) assertNeverStarted(c *gc.C, restartDelay time.
 	}
 }
 
-func (starter *testWorkerStarter) start(ctx context.Context) (worker.Worker, error) {
+func (starter *testWorkerStarter) start() (worker.Worker, error) {
 	if count := atomic.AddInt32(&starter.startCount, 1); count != 1 {
 		panic(fmt.Errorf("unexpected start count %d; expected 1", count))
 	}
