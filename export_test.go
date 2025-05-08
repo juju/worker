@@ -3,15 +3,9 @@
 
 package worker
 
-import (
-	jc "github.com/juju/testing/checkers"
-	gc "gopkg.in/check.v1"
-)
-
 // NewRunnerWithNotify starts the runner and sets the started notification channel.
-func NewRunnerWithNotify(c *gc.C, p RunnerParams, notify chan<- Worker) *Runner {
-	r, err := NewRunner(p)
-	c.Assert(err, jc.ErrorIsNil)
+func NewRunnerWithNotify(p RunnerParams, notify chan<- Worker) *Runner {
+	r := NewRunner(p)
 	r.notifyStarted = notify
 	return r
 }

@@ -26,7 +26,6 @@ type fixture struct {
 
 func (fix *fixture) run(c *gc.C, task func(), init ...worker.Worker) error {
 	err := catacomb.Invoke(catacomb.Plan{
-		Name: "test worker",
 		Site: &fix.catacomb,
 		Work: func() error { task(); return nil },
 		Init: init,
@@ -87,7 +86,7 @@ func (fix *fixture) assertAddAlive(c *gc.C, w *errorWorker) {
 	w.waitStillAlive(c)
 }
 
-func (fix *fixture) startErrorWorker(err error) *errorWorker {
+func (fix *fixture) startErrorWorker(c *gc.C, err error) *errorWorker {
 	ew := &errorWorker{}
 	ew.tomb.Go(func() error {
 		defer ew.tomb.Kill(err)
