@@ -17,20 +17,19 @@ import (
 
 type ReportSuite struct {
 	testing.IsolationSuite
-
-	timeFormatted string
-	fix           *engineFixture
-	clock         *testclock.Clock
+	fix   *engineFixture
+	clock *testclock.Clock
 }
 
 var _ = gc.Suite(&ReportSuite{})
 
 func (s *ReportSuite) SetUpTest(c *gc.C) {
+	// Use a non UTC timezone to show times output in UTC.
+	// Vostok is +6 for the entire year.
+	loc, err := time.LoadLocation("Antarctica/Vostok")
+	c.Assert(err, jc.ErrorIsNil)
+	t0 := time.Date(2018, 8, 7, 19, 15, 42, 0, loc)
 	s.IsolationSuite.SetUpTest(c)
-
-	t0 := time.Now().UTC()
-
-	s.timeFormatted = t0.Format("2006-01-02 15:04:05")
 	s.clock = testclock.NewClock(t0)
 	s.fix = &engineFixture{clock: s.clock}
 }
@@ -101,7 +100,7 @@ func (s *ReportSuite) TestReportStopping(c *gc.C) {
 				"task": map[string]interface{}{
 					"state":       "stopping",
 					"start-count": 1,
-					"started":     s.timeFormatted,
+					"started":     "2018-08-07 13:15:42",
 					"inputs":      ([]string)(nil),
 					"report": map[string]interface{}{
 						"key1": "hello there",
@@ -131,7 +130,7 @@ func (s *ReportSuite) TestReportInputs(c *gc.C) {
 				"task": map[string]interface{}{
 					"state":       "started",
 					"start-count": 1,
-					"started":     s.timeFormatted,
+					"started":     "2018-08-07 13:15:42",
 					"inputs":      ([]string)(nil),
 					"report": map[string]interface{}{
 						"key1": "hello there",
@@ -140,7 +139,7 @@ func (s *ReportSuite) TestReportInputs(c *gc.C) {
 				"another task": map[string]interface{}{
 					"state":       "started",
 					"start-count": 1,
-					"started":     s.timeFormatted,
+					"started":     "2018-08-07 13:15:42",
 					"inputs":      []string{"task"},
 					"report": map[string]interface{}{
 						"key1": "hello there",

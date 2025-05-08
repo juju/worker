@@ -24,8 +24,8 @@ const (
 	ErrDead    = errors.ConstError("worker runner is not running")
 )
 
-// StartFunc is the type alias of the function that creates a worker.
-type StartFunc = func(context.Context) (Worker, error)
+// StartFunc is the type of the function that creates a worker.
+type StartFunc func(context.Context) (Worker, error)
 
 // Runner runs a set of workers, restarting them as necessary
 // when they fail.
