@@ -457,11 +457,8 @@ func (runner *Runner) startWorker(req startReq) error {
 	}
 
 	labels := pprof.Labels(
-		"type", "worker",
-		"name", workerFuncName(req.start),
-		// id is the worker id, which is unique for each worker, this is
-		// supplied by the caller of StartWorker.
-		"id", req.id,
+		"worker-id", req.id,
+		"worker-name", workerFuncName(req.start),
 	)
 
 	runner.mu.Lock()
@@ -692,11 +689,7 @@ func workerFuncName(f func(context.Context) (Worker, error)) string {
 		return ""
 	}
 	parts := strings.Split(name, ".")
-
-	// Trim the package name and the function name to prevent it taking
-	// up too much space in the pprof output.
-	trim := 3
-	num := len(parts)
+	trim, num := 3, len(parts)
 	if num < trim {
 		return name
 	}
