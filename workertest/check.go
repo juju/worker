@@ -4,6 +4,7 @@
 package workertest
 
 import (
+	"context"
 	"time"
 
 	"github.com/juju/errors"
@@ -29,6 +30,8 @@ type C interface {
 	Errorf(format string, args ...any)
 	Check(obtained any, checker gc.Checker, args ...any) bool
 	Logf(format string, args ...any)
+	Context() context.Context
+	Helper()
 }
 
 // CheckAlive Wait()s a short time for the supplied worker to return an error,
@@ -39,6 +42,7 @@ type C interface {
 //
 // It doesn't Assert and is therefore suitable for use from any goroutine.
 func CheckAlive(c C, w worker.Worker) {
+	c.Helper()
 	wait := make(chan error, 1)
 	go func() {
 		wait <- w.Wait()
@@ -54,16 +58,22 @@ func CheckAlive(c C, w worker.Worker) {
 // further analysis, or fails the test after a timeout expires. It doesn't
 // Assert and is therefore suitable for use from any goroutine.
 func CheckKilled(c C, w worker.Worker) error {
+	c.Helper()
 	wait := make(chan error, 1)
 	go func() {
 		wait <- w.Wait()
 	}()
-	select {
-	case err := <-wait:
-		return err
-	case <-time.After(killTimeout):
-		c.Errorf("timed out waiting for worker to stop")
-		return errors.New("workertest: worker not stopping")
+	logTimeout := time.After(killTimeout)
+	for {
+		select {
+		case err := <-wait:
+			return err
+		case <-logTimeout:
+			c.Logf("still waiting for worker to be killed")
+		case <-c.Context().Done():
+			c.Errorf("timed out waiting for worker to stop")
+			return errors.New("workertest: worker not stopping")
+		}
 	}
 }
 
@@ -71,6 +81,7 @@ func CheckKilled(c C, w worker.Worker) error {
 // returns for further analysis, or fails the test after a timeout expires.
 // It doesn't Assert and is therefore suitable for use from any goroutine.
 func CheckKill(c C, w worker.Worker) error {
+	c.Helper()
 	w.Kill()
 	return CheckKilled(c, w)
 }
@@ -86,6 +97,7 @@ func CheckKill(c C, w worker.Worker) error {
 // to run successfully; and it doesn't Assert, and is therefore suitable for use
 // from any goroutine.
 func CleanKill(c C, w worker.Worker) {
+	c.Helper()
 	err := CheckKill(c, w)
 	c.Check(err, jc.ErrorIsNil)
 }
@@ -101,6 +113,7 @@ func CleanKill(c C, w worker.Worker) {
 // testing that failure; and it doesn't Assert, and is therefore suitable for
 // use from any goroutine.
 func DirtyKill(c C, w worker.Worker) {
+	c.Helper()
 	err := CheckKill(c, w)
 	if err != nil {
 		c.Logf("ignoring error: %v", err)
@@ -119,6 +132,7 @@ func DirtyKill(c C, w worker.Worker) {
 // unexpectedly, and make every effort to prevent a rogue worker living
 // beyond its test.
 func CheckNilOrKill(c C, w worker.Worker) {
+	c.Helper()
 	if !c.Check(w, gc.IsNil) {
 		c.Logf("stopping rogue worker...")
 		CleanKill(c, w)
