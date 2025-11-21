@@ -310,7 +310,7 @@ func (runner *Runner) Wait() error {
 
 // Kill implements Worker.Kill
 func (runner *Runner) Kill() {
-	runner.params.Logger.Debugf("killing runner %p", runner)
+	runner.params.Logger.Debugf("killing runner %q", runner.params.Name)
 	runner.tomb.Kill(nil)
 }
 
@@ -438,7 +438,6 @@ func (runner *Runner) run() error {
 			tombDying = nil
 
 		case req := <-runner.startc:
-			runner.params.Logger.Debugf("start %q", req.id)
 			req.reply <- runner.startWorker(req)
 
 		case id := <-runner.stopc:
