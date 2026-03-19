@@ -869,7 +869,7 @@ func (*RunnerSuite) TestRunnerReport(c *gc.C) {
 		}
 	}
 
-	report := runner.Report()
+	report := runner.Report(context.Background())
 	c.Assert(report, jc.DeepEquals, map[string]interface{}{
 		"workers": map[string]interface{}{
 			"worker-0": map[string]interface{}{
@@ -899,6 +899,21 @@ func (*RunnerSuite) TestRunnerReport(c *gc.C) {
 				"started": t0Format,
 			},
 		}})
+}
+
+func (*RunnerSuite) TestRunnerReportCancelledContext(c *gc.C) {
+	runner, err := worker.NewRunner(worker.RunnerParams{
+		Name:    "test",
+		IsFatal: noneFatal,
+	})
+	c.Assert(err, jc.ErrorIsNil)
+	defer worker.Stop(runner)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	report := runner.Report(ctx)
+	c.Assert(report, gc.IsNil)
 }
 
 type testWorkerStarter struct {
@@ -1005,7 +1020,7 @@ func (t *testWorker) Wait() error {
 	return t.tomb.Wait()
 }
 
-func (t *testWorker) Report() map[string]interface{} {
+func (t *testWorker) Report(ctx context.Context) map[string]interface{} {
 	return t.starter.report
 }
 

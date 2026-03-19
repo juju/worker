@@ -215,7 +215,7 @@ func (w *minimalWorker) Wait() error {
 	return w.tomb.Wait()
 }
 
-func (w *minimalWorker) Report() map[string]interface{} {
+func (w *minimalWorker) Report(ctx context.Context) map[string]interface{} {
 	return map[string]interface{}{
 		"key1": "hello there",
 	}

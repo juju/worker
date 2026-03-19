@@ -4,6 +4,7 @@
 package dependency_test
 
 import (
+	"context"
 	"time"
 
 	"github.com/juju/clock/testclock"
@@ -37,7 +38,7 @@ func (s *ReportSuite) SetUpTest(c *gc.C) {
 
 func (s *ReportSuite) TestReportStarted(c *gc.C) {
 	s.fix.run(c, func(engine *dependency.Engine) {
-		report := engine.Report()
+		report := engine.Report(context.Background())
 		c.Check(report, jc.DeepEquals, map[string]interface{}{
 			"state":     "started",
 			"manifolds": map[string]interface{}{},
@@ -48,7 +49,7 @@ func (s *ReportSuite) TestReportStarted(c *gc.C) {
 func (s *ReportSuite) TestReportStopped(c *gc.C) {
 	s.fix.run(c, func(engine *dependency.Engine) {
 		workertest.CleanKill(c, engine)
-		report := engine.Report()
+		report := engine.Report(context.Background())
 		c.Check(report, jc.DeepEquals, map[string]interface{}{
 			"state":     "stopped",
 			"manifolds": map[string]interface{}{},
@@ -89,7 +90,7 @@ func (s *ReportSuite) TestReportStopping(c *gc.C) {
 
 		var report map[string]interface{}
 		for i := 0; i < 3; i++ {
-			report = engine.Report()
+			report = engine.Report(context.Background())
 			if isTaskStopping(report) {
 				break
 			}
@@ -124,7 +125,7 @@ func (s *ReportSuite) TestReportInputs(c *gc.C) {
 		c.Assert(err, jc.ErrorIsNil)
 		mh2.AssertOneStart(c)
 
-		report := engine.Report()
+		report := engine.Report(context.Background())
 		c.Check(report, jc.DeepEquals, map[string]interface{}{
 			"state": "started",
 			"manifolds": map[string]interface{}{
@@ -160,7 +161,7 @@ func (s *ReportSuite) TestReportError(c *gc.C) {
 		mh1.AssertNoStart(c)
 
 		workertest.CleanKill(c, engine)
-		report := engine.Report()
+		report := engine.Report(context.Background())
 		c.Check(report, jc.DeepEquals, map[string]interface{}{
 			"state": "stopped",
 			"manifolds": map[string]interface{}{
@@ -170,6 +171,32 @@ func (s *ReportSuite) TestReportError(c *gc.C) {
 					"inputs": []string{"missing"},
 				},
 			},
+		})
+	})
+}
+
+func (s *ReportSuite) TestReportCancelledContextWhileRunning(c *gc.C) {
+	s.fix.run(c, func(engine *dependency.Engine) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		report := engine.Report(ctx)
+		c.Check(report, jc.DeepEquals, map[string]interface{}{
+			"error": "context canceled",
+		})
+	})
+}
+
+func (s *ReportSuite) TestReportCancelledContextWhenStopped(c *gc.C) {
+	s.fix.run(c, func(engine *dependency.Engine) {
+		workertest.CleanKill(c, engine)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		report := engine.Report(ctx)
+		c.Check(report, jc.DeepEquals, map[string]interface{}{
+			"error": "context canceled",
 		})
 	})
 }
