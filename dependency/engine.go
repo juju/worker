@@ -209,7 +209,7 @@ func (engine *Engine) loop() error {
 			}
 		case ticket := <-engine.report:
 			// This is safe so long as the Report method reads the result.
-			ticket.result <- engine.liveReport()
+			ticket.result <- engine.liveReport(ticket.ctx)
 		case ticket := <-engine.install:
 			// This is safe so long as the Install method reads the result.
 			ticket.result <- engine.gotInstall(ticket.name, ticket.manifold)
@@ -244,20 +244,26 @@ func (engine *Engine) Wait() error {
 }
 
 // Report is part of the Reporter interface.
-func (engine *Engine) Report() map[string]interface{} {
+func (engine *Engine) Report(ctx context.Context) map[string]interface{} {
 	report := make(chan map[string]interface{})
 	select {
-	case engine.report <- reportTicket{report}:
-		// This is safe so long as the loop sends a result.
-		return <-report
+	case <-ctx.Done():
+		return engine.errorReport(ctx.Err())
+	case engine.report <- reportTicket{ctx: ctx, result: report}:
+		return engine.waitForReport(ctx, report)
 	case <-engine.tomb.Dead():
+		if ctx.Err() != nil {
+			// Avoid flakiness if both context is canceled and tomb is dying
+			// at the same time
+			return engine.errorReport(ctx.Err())
+		}
 		// Note that we don't abort on Dying as we usually would; the
 		// oneShotDying approach in loop means that it can continue to
 		// process requests until the last possible moment. Only once
 		// loop has exited do we fall back to this report.
 		report := map[string]interface{}{
 			KeyState:     "stopped",
-			KeyManifolds: engine.manifoldsReport(),
+			KeyManifolds: engine.manifoldsReport(ctx),
 		}
 		if err := engine.Wait(); err != nil {
 			report[KeyError] = err.Error()
@@ -266,9 +272,30 @@ func (engine *Engine) Report() map[string]interface{} {
 	}
 }
 
+// errorReport generates a map containing error details using the provided error.
+func (engine *Engine) errorReport(err error) map[string]interface{} {
+	return map[string]interface{}{
+		KeyError: err.Error(),
+	}
+}
+
+// waitForReport waits for a report from the provided channel or exits early if the context is canceled.
+func (engine *Engine) waitForReport(ctx context.Context, report <-chan map[string]interface{}) map[string]interface{} {
+	select {
+	case <-ctx.Done():
+		// We already posted the ticket which means that the engine is dealing
+		// with it. We need to flush the report channel to avoid a deadlock in
+		// the engine.
+		go func() { <-report }()
+		return engine.errorReport(ctx.Err())
+	case result := <-report:
+		return result
+	}
+}
+
 // liveReport collects and returns information about the engine, its manifolds,
 // and their workers. It must only be called from the loop goroutine.
-func (engine *Engine) liveReport() map[string]interface{} {
+func (engine *Engine) liveReport(ctx context.Context) map[string]interface{} {
 	var reportError error
 	state := "started"
 	if engine.isDying() {
@@ -281,7 +308,7 @@ func (engine *Engine) liveReport() map[string]interface{} {
 	}
 	report := map[string]interface{}{
 		KeyState:     state,
-		KeyManifolds: engine.manifoldsReport(),
+		KeyManifolds: engine.manifoldsReport(ctx),
 	}
 	if reportError != nil {
 		report[KeyError] = reportError.Error()
@@ -292,8 +319,9 @@ func (engine *Engine) liveReport() map[string]interface{} {
 // manifoldsReport collects and returns information about the engine's manifolds
 // and their workers. Until the tomb is Dead, it should only be called from the
 // loop goroutine; after that, it's goroutine-safe.
-func (engine *Engine) manifoldsReport() map[string]interface{} {
+func (engine *Engine) manifoldsReport(ctx context.Context) map[string]interface{} {
 	manifolds := map[string]interface{}{}
+	// prepopulate map with expected reports
 	for name, info := range engine.current {
 		report := map[string]interface{}{
 			KeyState:  info.state(),
@@ -310,7 +338,27 @@ func (engine *Engine) manifoldsReport() map[string]interface{} {
 		}
 		if reporter, ok := info.worker.(Reporter); ok {
 			if reporter != engine {
-				report[KeyReport] = reporter.Report()
+				report[KeyReportStatus] = "Waiting for worker to report..."
+			}
+		}
+		manifolds[name] = report
+	}
+
+	// Call each reporter
+	for name, info := range engine.current {
+		if ctx.Err() != nil {
+			return manifolds
+		}
+		report := manifolds[name].(map[string]interface{})
+		if reporter, ok := info.worker.(Reporter); ok {
+			if reporter != engine {
+				if reported := reporter.Report(ctx); reported != nil {
+					report[KeyReport] = reported
+				}
+				delete(report, KeyReportStatus)
+				if ctx.Err() != nil {
+					report[KeyReportStatus] = ctx.Err().Error()
+				}
 			}
 		}
 		manifolds[name] = report
@@ -841,5 +889,6 @@ type stoppedTicket struct {
 // reportTicket is used by the engine to notify the loop that a status report
 // should be generated.
 type reportTicket struct {
+	ctx    context.Context
 	result chan map[string]interface{}
 }
