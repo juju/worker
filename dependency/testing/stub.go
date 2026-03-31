@@ -10,7 +10,7 @@ import (
 
 	"github.com/juju/errors"
 
-	"github.com/juju/worker/v4/dependency"
+	"github.com/juju/worker/v5/dependency"
 )
 
 // NewStubResource creates a single StubResource with the given

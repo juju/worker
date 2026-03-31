@@ -1,4 +1,4 @@
-module github.com/juju/worker/v4
+module github.com/juju/worker/v5
 
 go 1.24.2
 
