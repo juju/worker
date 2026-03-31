@@ -8,7 +8,7 @@ import (
 
 	"github.com/juju/errors"
 
-	"github.com/juju/worker/v4"
+	"github.com/juju/worker/v5"
 )
 
 // Manifold defines the behaviour of a node in an Engine's dependency graph. It's

@@ -9,7 +9,7 @@ import (
 
 	"github.com/juju/errors"
 
-	"github.com/juju/worker/v4"
+	"github.com/juju/worker/v5"
 )
 
 // snapshot encapsulates a snapshot of workers and output funcs and implements
